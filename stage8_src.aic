@@ -1,0 +1,43 @@
+[§ getconst [] [^ 42]]
+[§ double [x] [^ [* x 2]]]
+[§ add [a b] [^ [+ a b]]]
+
+[! buf 100]
+[! i 0]
+[! v 0]
+[! acc 0]
+[! flag 0]
+[! r 0]
+[! w 0]
+
+[! acc [+ 1 2]]
+
+[W [< i 5] [D
+  [! v [double i]]
+  [? [> v 4]
+    [D [! flag 1] [@! buf i v]]
+    [D [! flag 0]]]
+  [! acc [add acc v]]
+  [! i [+ i 1]]
+]]
+
+[? [== flag 1]
+  [! r 1]
+  [! r 0]]
+
+[? [== r 1]
+  [! w [getconst]]]
+
+[@ buf i]
+[@@! buf i v]
+[add acc v]
+
+[D
+  [! r [+ r 1]]
+  [W [< w 3] [D
+    [! w [+ w 1]]
+    [? [== w 2] [^ w] [D]]
+  ]]
+]
+
+[^ acc]

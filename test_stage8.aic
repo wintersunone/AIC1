@@ -384,7 +384,8 @@
 [§ emit_return [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
   [! h [@@ ctx 0]]
   [! op_tok [+ s 1]]
-  [emit_expr tokens match src op_tok ctx]
+  [! expr_tok [+ op_tok 1]]
+  [emit_expr tokens match src expr_tok ctx]
   [K h "    jmp     "] [K h [@@$ ctx 7]] [K h "\n"]
   [^ 0]
 ]]
@@ -480,13 +481,20 @@
               [? [|| [== opcode 7] [|| [== opcode 8] [|| [== opcode 9] [|| [== opcode 10] [|| [== opcode 11] [== opcode 12]]]]]]
                 [emit_expr tokens match src s ctx]
                 [? [|| [== opcode 1] [&& [>= opcode 13] [<= opcode 21]]]
-                  [. "CodegenError: emit_stmt - '.' and libc-op statements aren't implemented yet (Stage 8 scope)"]
+                  [. "CodegenError: emit_stmt - dot and libc-op statements aren't implemented yet (Stage 8 scope)"]
                   [D
                     [! found [resolve_func tokens src hst hln ctx]]
                     [? [!= found -1]
                       [emit_call tokens match src s ctx found]
-                      [. "CodegenError: emit_stmt - unsupported statement head (not '.'/'!'/'?'/'W'/'D'/'^', a byte/word op, or a known function)"]]
-                  ]]]]]]]]]
+                      [. "CodegenError: emit_stmt - unsupported statement head"]]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    ]
   ]]
   [^ 0]
 ]]
@@ -556,7 +564,7 @@
 
 // build ctx = {handle, label_n, decls_ptr, decl_count, funcs_ptr,
 // fn_param_count_ptr, func_count, epilogue_label_ptr}
-[! outh [O "stage7_out.s" "w"]]
+[! outh [O "stage8_out.s" "w"]]
 [! ctx [H 64]]
 [@@! ctx 0 outh]
 [@@! ctx 1 0]
