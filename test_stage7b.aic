@@ -1,0 +1,232 @@
+// test_stage7.aic - verification harness for Stage 7 (arithmetic/comparison
+// expression emitter: the first slice of Codegen.compile_expr ported into
+// AIC). Tokenizes stage7_src.aic with the same tokenizer compiler.aic uses,
+// builds a slot table the same way Analyzer.analyze() does (all declared
+// names, sorted, -> index), then walks each top-level '!' statement's RHS
+// expression with emit_expr, writing x86-64 text to stage7_out.s via 'K' -
+// diffed byte-for-byte against ground_truth_stage7.s (generated directly
+// from aic_codegen.py's own real Codegen.compile_expr) as the pass/fail bar.
+//
+// Scope of this increment, stated honestly: literals, variable reads, and
+// the binary arithmetic/bitwise/shift/comparison tail of compile_expr
+// (+ - * / % & | ^^ << >> == != < > <= >=). Function calls, byte/word/libc
+// ops, '&&'/'||' short-circuit, and '?' as a value are NOT handled by
+// emit_expr yet - deliberately out of scope for this pass, same as every
+// prior stage named its own boundary rather than silently half-covering
+// something.
+
+[§ is_space [b] [^ [|| [== b 32] [|| [== b 9] [|| [== b 10] [== b 13]]]]]]
+[§ is_atom_char [b] [^ [== [|| [is_space b] [|| [== b 91] [|| [== b 93] [== b 34]]]] 0]]]
+[§ write_token [[$ tokens] idx tag start len] [D [@@! tokens [* idx 3] tag] [@@! tokens [+ [* idx 3] 1] start] [@@! tokens [+ [* idx 3] 2] len] [^ idx]]]
+[§ [$ slice_str] [[$ src] start len] [D [! buf [H len]] [! k 0] [W [< k len] [D [@! buf k [@ src [+ start k]]] [! k [+ k 1]]]] [^ buf]]]
+[§ streq [[$ src] s1 l1 s2 l2] [D [! ok 1] [? [!= l1 l2] [! ok 0] [D]] [! k 0] [W [&& ok [< k l1]] [D [? [!= [@ src [+ s1 k]] [@ src [+ s2 k]]] [! ok 0] [D]] [! k [+ k 1]]]] [^ ok]]]
+[§ decl_add [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [? found [D] [D [@@! recs [* count 2] start] [@@! recs [+ [* count 2] 1] len] [! count [+ count 1]]]] [^ count]]]
+
+// --- new for stage 7 -------------------------------------------------------
+[§ decl_index [[$ src] [$ recs] count start len] [D [! i 0] [! result -1] [W [&& [== result -1] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! result i] [D]] [! i [+ i 1]]]] [^ result]]]
+
+[§ strlt [[$ src] s1 l1 s2 l2] [D [! minlen [? [< l1 l2] l1 l2]] [! i 0] [! result -1] [W [&& [== result -1] [< i minlen]] [D [! b1 [@ src [+ s1 i]]] [! b2 [@ src [+ s2 i]]] [? [< b1 b2] [! result 1] [? [> b1 b2] [! result 0] [D]]] [! i [+ i 1]]]] [? [== result -1] [! result [? [< l1 l2] 1 0]] [D]] [^ result]]]
+
+[§ sort_decls [[$ src] [$ recs] lo hi] [D [! i lo] [W [< i hi] [D [! minidx i] [! j [+ i 1]] [W [< j hi] [D [? [strlt src [@@ recs [* j 2]] [@@ recs [+ [* j 2] 1]] [@@ recs [* minidx 2]] [@@ recs [+ [* minidx 2] 1]]] [! minidx j] [D]] [! j [+ j 1]]]] [? [!= minidx i] [D [! ts [@@ recs [* minidx 2]]] [! tl [@@ recs [+ [* minidx 2] 1]]] [@@! recs [* minidx 2] [@@ recs [* i 2]]] [@@! recs [+ [* minidx 2] 1] [@@ recs [+ [* i 2] 1]]] [@@! recs [* i 2] ts] [@@! recs [+ [* i 2] 1] tl]] [D]] [! i [+ i 1]]]] [^ 0]]]
+
+[§ is_numeric_atom [[$ src] start len] [D [! b0 [@ src start]] [! b1 [? [> len 1] [@ src [+ start 1]] 0]] [^ [|| [&& [>= b0 48] [<= b0 57]] [&& [== b0 45] [&& [> len 1] [&& [>= b1 48] [<= b1 57]]]]]]]]
+
+[§ next_child_end [[$ tokens] [$ match] p] [^ [? [== [@@ tokens [* p 3]] 1] [@@ match p] p]]]
+
+[§ binop_code1 [b] [^ [? [== b 43] 1 [? [== b 45] 2 [? [== b 42] 3 [? [== b 47] 4 [? [== b 37] 5 [? [== b 38] 6 [? [== b 124] 7 [? [== b 60] 8 [? [== b 62] 9 -1]]]]]]]]]]]
+[§ binop_code2 [b0 b1] [^ [? [&& [== b0 61] [== b1 61]] 10 [? [&& [== b0 33] [== b1 61]] 11 [? [&& [== b0 60] [== b1 61]] 12 [? [&& [== b0 62] [== b1 61]] 13 [? [&& [== b0 94] [== b1 94]] 14 [? [&& [== b0 60] [== b1 60]] 15 [? [&& [== b0 62] [== b1 62]] 16 -1]]]]]]]]]
+[§ binop_classify [[$ src] hst hln] [D [! b0 [@ src hst]] [! result -1] [? [== hln 1] [! result [binop_code1 b0]] [D]] [? [== hln 2] [D [! b1 [@ src [+ hst 1]]] [! result [binop_code2 b0 b1]]] [D]] [^ result]]]
+
+// classify_op1/2/3/4: copied verbatim from compiler.aic - same codes, same
+// meaning (7=@ 8=@! 9=@@ 10=@@! 11=@@$ 12=@@$!) - reused here rather than
+// reinvented so byte/word-op detection stays byte-for-byte consistent with
+// the real statement-head classifier already verified in compiler.aic.
+[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 -2]]]]]]]]]]]]]]]]]]
+[§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 -2]]]]]
+[§ classify_op3 [b0 b1 b2] [^ [? [&& [== b0 64] [&& [== b1 64] [== b2 33]]] 10 [? [&& [== b0 64] [&& [== b1 64] [== b2 36]]] 11 -2]]]]
+[§ classify_op4 [b0 b1 b2 b3] [^ [? [&& [== b0 64] [&& [== b1 64] [&& [== b2 36] [== b3 33]]]] 12 -2]]]
+
+[§ emit_byte_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [! a1e [next_child_end tokens match arg1]]
+  [! arg2 [+ a1e 1]]
+  [? [== code 7] [D
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    movq    %rax, %rbx\n"]
+      [K h "    popq    %rax\n"]
+      [K h "    movzbq  (%rax,%rbx), %rax\n"]
+    ] [D]]
+  [? [== code 8] [D
+      [! a2e [next_child_end tokens match arg2]]
+      [! arg3 [+ a2e 1]]
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg3 ctx]
+      [K h "    popq    %rbx\n"]
+      [K h "    popq    %rcx\n"]
+      [K h "    movb    %al, (%rcx,%rbx)\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+[§ emit_word_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [! a1e [next_child_end tokens match arg1]]
+  [! arg2 [+ a1e 1]]
+  [? [|| [== code 9] [== code 11]] [D
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    movq    %rax, %rbx\n"]
+      [K h "    popq    %rax\n"]
+      [K h "    movq    (%rax,%rbx,8), %rax\n"]
+    ] [D]]
+  [? [|| [== code 10] [== code 12]] [D
+      [! a2e [next_child_end tokens match arg2]]
+      [! arg3 [+ a2e 1]]
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg3 ctx]
+      [K h "    popq    %rbx\n"]
+      [K h "    popq    %rcx\n"]
+      [K h "    movq    %rax, (%rcx,%rbx,8)\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+[§ new_label_num [[$ ctx]] [D [! v [+ [@@ ctx 1] 1]] [@@! ctx 1 v] [^ v]]]
+
+[§ emit_binop_tail [[$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [? [== code 1] [K h "    addq    %rbx, %rax\n"] [D]]
+  [? [== code 2] [K h "    subq    %rbx, %rax\n"] [D]]
+  [? [== code 3] [K h "    imulq   %rbx, %rax\n"] [D]]
+  [? [|| [== code 4] [== code 5]] [D
+      [! lbl [new_label_num ctx]]
+      [! lbltxt [N lbl]]
+      [K h "    testq   %rbx, %rbx\n"]
+      [K h "    jne     .Ldivok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Ldivzero\n"]
+      [K h ".Ldivok"] [K h lbltxt] [K h ":\n"]
+      [K h "    cqto\n"]
+      [K h "    idivq   %rbx\n"]
+      [? [== code 5] [K h "    movq    %rdx, %rax\n"] [D]]
+    ] [D]]
+  [? [== code 6] [K h "    andq    %rbx, %rax\n"] [D]]
+  [? [== code 7] [K h "    orq     %rbx, %rax\n"] [D]]
+  [? [== code 14] [K h "    xorq    %rbx, %rax\n"] [D]]
+  [? [== code 15] [D [K h "    movq    %rbx, %rcx\n"] [K h "    shlq    %cl, %rax\n"]] [D]]
+  [? [== code 16] [D [K h "    movq    %rbx, %rcx\n"] [K h "    sarq    %cl, %rax\n"]] [D]]
+  [? [== code 8] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setl    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 9] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setg    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 10] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    sete    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 11] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setne    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 12] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setle    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 13] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setge    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [|| [< code 1] [> code 16]] [. "CodegenError: emit_expr only supports arithmetic/comparison binary ops so far - got an unrecognized/unsupported operator"] [D]]
+  [^ 0]
+]]
+
+[§ emit_expr [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! tag [@@ tokens [* s 3]]]
+  [? [== tag 3] [D
+      [! ast [@@ tokens [+ [* s 3] 1]]]
+      [! aln [@@ tokens [+ [* s 3] 2]]]
+      [? [is_numeric_atom src ast aln] [D
+          [! v [V [slice_str src ast aln]]]
+          [! vtxt [N v]]
+          [K h "    movq    $"] [K h vtxt] [K h ", %rax\n"]
+        ] [D
+          [! decls [@@$ ctx 2]]
+          [! dcount [@@ ctx 3]]
+          [! idx [decl_index src decls dcount ast aln]]
+          [! off [* -8 [+ idx 1]]]
+          [! offtxt [N off]]
+          [K h "    movq    "] [K h offtxt] [K h "(%rbp), %rax\n"]
+        ]]
+    ] [D
+      [! op_tok [+ s 1]]
+      [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+      [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+      [! left [+ op_tok 1]]
+      [! lce [next_child_end tokens match left]]
+      [! right [+ lce 1]]
+      [emit_expr tokens match src left ctx]
+      [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src right ctx]
+      [K h "    movq    %rax, %rbx\n"]
+      [K h "    popq    %rax\n"]
+      [emit_binop_tail ctx [binop_classify src hst hln]]
+    ]]
+]]
+
+// --- driver: tokenize stage7_src.aic (same tokenizer compiler.aic uses) ---
+[! h [O "stage7_src.aic" "r"]]
+[! n [Z h]]
+[! src [R h n]]
+[! tokens [H [* [+ n 1] 24]]]
+[! i 0]
+[! tok_count 0]
+[! in_comment 0]
+[! in_string 0]
+[! string_start 0]
+[! atom_start 0]
+[! c 0]
+[W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
+[X h]
+
+[! stack [H [* tok_count 8]]]
+[! match [H [* tok_count 8]]]
+[! sp 0]
+[! k 0]
+[! tag 0]
+[! j 0]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [@@! stack sp j] [! sp [+ sp 1]]] [? [== tag 2] [D [! sp [- sp 1]] [! k [@@ stack sp]] [@@! match k j] [@@! match j k]] [D]]] [! j [+ j 1]]]
+
+// collect declared names: every top-level '[' '!' <atom> ...] form
+[! decls [H [* [+ tok_count 1] 16]]]
+[! decl_count 0]
+[! j 0]
+[W [< j tok_count] [D
+  [! tag [@@ tokens [* j 3]]]
+  [? [== tag 1] [D
+      [! fe [@@ match j]]
+      [? [&& [< [+ j 1] tok_count] [&& [== [@@ tokens [* [+ j 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ j 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ j 1] 3] 1]]] 33]]]]
+        [! decl_count [decl_add src decls decl_count [@@ tokens [+ [* [+ j 2] 3] 1]] [@@ tokens [+ [* [+ j 2] 3] 2]]]]
+        [D]]
+      [! j [+ fe 1]]
+    ]
+    [! j [+ j 1]]]
+]]
+[. "DECL_COUNT" decl_count]
+[sort_decls src decls 0 decl_count]
+
+// build ctx = {handle, label_n, decls_ptr, decl_count}
+[! outh [O "stage7_out.s" "w"]]
+[! ctx [H 32]]
+[@@! ctx 0 outh]
+[@@! ctx 1 0]
+[@@$! ctx 2 decls]
+[@@! ctx 3 decl_count]
+
+// walk each top-level '[! name expr]' form and emit its RHS
+[! stmt_count 0]
+[! j 0]
+[W [< j tok_count] [D
+  [! tag [@@ tokens [* j 3]]]
+  [? [== tag 1] [D
+      [! fe [@@ match j]]
+      [! name_tok [+ j 2]]
+      [! expr_tok [+ name_tok 1]]
+      [emit_expr tokens match src expr_tok ctx]
+      [! stmt_count [+ stmt_count 1]]
+      [! j [+ fe 1]]
+    ]
+    [! j [+ j 1]]]
+]]
+[X outh]
+[. "STMT_COUNT" stmt_count]
+[. "LABELS_USED" [@@ ctx 1]]

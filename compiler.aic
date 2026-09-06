@@ -1,0 +1,414 @@
+// compiler.aic - the self-hosted AIC compiler, written in AIC.
+//
+// Progress so far (each stage verified byte-for-byte identical between
+// the Python interpreter and a gcc-assembled native binary before being
+// trusted as a foundation for the next one):
+//   Stage 1 - tokenizer: walks the source byte-by-byte with '@', classifying
+//             whitespace / brackets / string literals / comments / atoms,
+//             writing {tag, start, len} triples into a word-addressed
+//             token-record buffer via write_token.
+//   Stage 2 - bracket matching: a stack-based pass builds a match[] table -
+//             for every '[' token index, the index of its matching ']' -
+//             which gives the flat token stream tree-equivalent structure
+//             (skip a nested form with j = match[j]) without ever
+//             allocating real node objects.
+//   Stage 3 - top-level form registration: walks the stream at depth 0
+//             (jumping straight to match[j] instead of counting depth),
+//             classifying each top-level form as a function definition
+//             (head symbol is the two-byte atom section-sign, matched with
+//             is_section since this tokenizer is byte-oriented and never
+//             UTF-8-decodes) or a main-body statement.
+//   Stage 4 - per-function param parsing + declared-name collection: for
+//             each function record from stage 3, splits its parameter
+//             list into (name, type) pairs - bare atom = INT, '[$ name]'
+//             = STR, mirroring _parse_name_decl in aic_codegen.py - then
+//             scans the body for every '[' '!' <atom> pattern at any
+//             nesting depth (mirroring collect_declarations), seeding the
+//             declared-name set with the params first so a re-assigned
+//             param isn't miscounted as a fresh declaration. main's own
+//             declared set is collected the same way over the token
+//             ranges stage 3 tagged as non-function forms.
+//
+//   Stage 5 - statement head classification: classify_stmt mirrors
+//             compile_stmt's own dispatch, but only for each program's
+//             TOP-LEVEL statements (main's, or a function's outermost
+//             body forms) - nothing nested inside a W/D/'?' body was
+//             looked at yet.
+//   Stage 6 - full-depth coverage, in two halves:
+//     6a: recurse_stmt walks into every '?'/'W'/'D' body at any nesting
+//         depth (not just top-level), extending stage 5's histogram to
+//         the WHOLE program. Uses a reduced classifier (classify_op_only)
+//         since native codegen's 6-param-per-function cap leaves no room
+//         to also thread funcs/func_count through a recursive call - see
+//         the comment above classify_op_only for the honest tradeoff.
+//     6b: collect_reads walks every expression tree (skipping op/function
+//         names in head position and '!'s own write target) and collects
+//         every genuine variable READ, which is then checked against the
+//         declared-name sets stage 4 already built (main_decl, or each
+//         function's own fn_decl_buf) - the read-validation half of
+//         aic_codegen.py's own check_reads, reimplemented in AIC.
+//
+// Next: stage 7 - this is the last piece before compiler.aic can start
+// EMITTING anything: turn each validated statement into an actual
+// instruction-equivalent action, starting with arithmetic expressions
+// (the same @/@@/binop primitives this very file is built from) compiled
+// to x86-64 text written with 'K' - i.e. begin porting Codegen.compile_expr
+// itself into AIC.
+//
+// Helper functions written in AIC itself, not the compiler: is_section,
+// slice_str (real heap string-building: allocate + loop with @/@!),
+// streq, decl_add (a dedup-on-insert array, itself just H + @@/@@!).
+
+[§ is_space [b] [^ [|| [== b 32] [|| [== b 9] [|| [== b 10] [== b 13]]]]]]
+[§ is_atom_char [b] [^ [== [|| [is_space b] [|| [== b 91] [|| [== b 93] [== b 34]]]] 0]]]
+[§ write_token [[$ tokens] idx tag start len] [D [@@! tokens [* idx 3] tag] [@@! tokens [+ [* idx 3] 1] start] [@@! tokens [+ [* idx 3] 2] len] [^ idx]]]
+[§ is_section [[$ tokens] [$ src] t] [D [! tg [@@ tokens [* t 3]]] [! st [@@ tokens [+ [* t 3] 1]]] [! ln [@@ tokens [+ [* t 3] 2]]] [^ [&& [== tg 3] [&& [== ln 2] [&& [== [@ src st] 194] [== [@ src [+ st 1]] 167]]]]]]]
+[§ [$ slice_str] [[$ src] start len] [D [! buf [H len]] [! k 0] [W [< k len] [@! buf k [@ src [+ start k]]] [! k [+ k 1]]] [^ buf]]]
+[§ streq [[$ src] s1 l1 s2 l2] [D [! ok 1] [? [!= l1 l2] [! ok 0] [D]] [! k 0] [W [&& ok [< k l1]] [? [!= [@ src [+ s1 k]] [@ src [+ s2 k]]] [! ok 0] [D]] [! k [+ k 1]]] [^ ok]]]
+[§ decl_add [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [? found [D] [D [@@! recs [* count 2] start] [@@! recs [+ [* count 2] 1] len] [! count [+ count 1]]]] [^ count]]]
+
+// --- stage 5: statement head classification -------------------------------
+// Mirrors compile_stmt's dispatch in aic_codegen.py: given a statement's
+// head symbol, decide whether it's a built-in op ('.','!','?','W','D','^',
+// a byte/word/libc op) or a call to one of the functions stage 3 already
+// found - the last thing needed before a body can be walked and codegen'd.
+// classify_op1..4 compare the head symbol's raw bytes directly (cheaper
+// and simpler than building heap string literals to streq against, since
+// every built-in op is 1-4 ASCII bytes with no ambiguity by length+bytes).
+// Falls through to a streq scan against known function names only when no
+// built-in op matched - exactly the "elif op in self.functions" tier in
+// aic_codegen.py's own check_reads/compile_stmt chain.
+[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 -2]]]]]]]]]]]]]]]]]]
+[§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 -2]]]]]
+[§ classify_op3 [b0 b1 b2] [^ [? [&& [== b0 64] [&& [== b1 64] [== b2 33]]] 10 [? [&& [== b0 64] [&& [== b1 64] [== b2 36]]] 11 -2]]]]
+[§ classify_op4 [b0 b1 b2 b3] [^ [? [&& [== b0 64] [&& [== b1 64] [&& [== b2 36] [== b3 33]]]] 12 -2]]]
+
+// --- stage 6a: recursive structural classification -----------------------
+// classify_stmt (below) needs 6 params (tokens/src/funcs/func_count/
+// mstart/mend) just to resolve "is this a call to a KNOWN function" - the
+// native-codegen hard cap is 6 params per function, so a recursive helper
+// that also threads a histogram buffer through has no room left for
+// funcs/func_count. classify_op_only is the same dispatch minus that one
+// tier: it still identifies every built-in op exactly (byte-for-byte
+// identical to classify_stmt for '.','!','?','W','D','^', byte/word/libc
+// ops, and section-defs), it just can't tell "genuine call to a known
+// AIC function" apart from "truly unrecognized" - both fall into one
+// bucket (-2). That's a real, deliberate fidelity loss versus stage 5's
+// top-level histogram (which keeps using the full classify_stmt, unaffected)
+// - honest tradeoff, not a bug: the only thing recursion structurally
+// NEEDS to detect correctly is W/D/'?' (to know what to recurse into), and
+// classify_op_only gets those exactly right.
+[§ classify_op_only [[$ tokens] [$ src] s] [D [! result -2] [? [!= [@@ tokens [* s 3]] 1] [! result -1] [D [! op_tok [+ s 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [^ result]]]
+
+// A "child" of a bracketed form starting at token p is either another
+// bracketed form (p..match[p]) or a single atom/string token (p..p) -
+// next_child_end returns whichever end applies, so a caller can always
+// advance with `p = next_child_end(...) + 1` regardless of which case it
+// was, mirroring the exact child-walking idiom stage 3/4 already use
+// inline (this just gives it a name so stage 6 can reuse it recursively).
+[§ next_child_end [[$ tokens] [$ match] p] [^ [? [== [@@ tokens [* p 3]] 1] [@@ match p] p]]]
+
+// recurse_stmt: classify a statement at [s,e], then - for exactly the
+// three compound forms ('?','W','D') - recurse into every nested
+// statement its body actually contains, at any depth, accumulating into
+// the SAME shared histogram. This is what turns stage 5's "top-level
+// statements only" count into a true whole-program count.
+[§ recurse_stmt [[$ tokens] [$ match] [$ src] s e [$ hist]] [D
+  [! code [classify_op_only tokens src s]]
+  [! idx [+ code 2]]
+  [@@! hist idx [+ [@@ hist idx] 1]]
+  [? [== code 4] [D
+      [! p [+ s 2]]
+      [! ce [next_child_end tokens match p]]
+      [! p [+ ce 1]]
+      [W [< p e] [D [! ce2 [next_child_end tokens match p]] [recurse_stmt tokens match src p ce2 hist] [! p [+ ce2 1]]]]
+    ] [D]]
+  [? [== code 5] [D
+      [! p [+ s 2]]
+      [W [< p e] [D [! ce [next_child_end tokens match p]] [recurse_stmt tokens match src p ce hist] [! p [+ ce 1]]]]
+    ] [D]]
+  [? [== code 3] [D
+      [! p [+ s 2]]
+      [! ce [next_child_end tokens match p]]
+      [! p [+ ce 1]]
+      [? [< p e] [D
+          [! ce2 [next_child_end tokens match p]]
+          [recurse_stmt tokens match src p ce2 hist]
+          [! p [+ ce2 1]]
+          [? [< p e] [D [! ce3 [next_child_end tokens match p]] [recurse_stmt tokens match src p ce3 hist]] [D]]
+        ] [D]]
+    ] [D]]
+  [^ code]
+]]
+
+// --- stage 6b: expression-level read validation ---------------------------
+// The AIC-in-AIC equivalent of check_reads' read-validation half: walk an
+// expression/statement tree and collect every atom that's a genuine
+// variable READ - skipping op/function-name symbols in head position and
+// skipping '!'s own assignment target (a write, not a read) - so each one
+// can be checked against the declared-name set stage 4 already built.
+// Deliberately NOT covered (scope of this increment, not a hidden bug):
+// type inference/mismatch checking (that's check_reads' OTHER half) and
+// '[$ name]' markers, which never appear inside a statement body in this
+// codebase's own style. is_numeric_atom must check the digit AFTER a '-',
+// not just its presence - '-x' is a variable, not a negative literal.
+[§ is_numeric_atom [[$ src] start len] [D [! b0 [@ src start]] [! b1 [? [> len 1] [@ src [+ start 1]] 0]] [^ [|| [&& [>= b0 48] [<= b0 57]] [&& [== b0 45] [&& [> len 1] [&& [>= b1 48] [<= b1 57]]]]]]]]
+
+[§ decl_contains [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [^ found]]]
+
+// collect_reads needs no explicit 'end' param: for a bracketed form its
+// own extent is just match[s], derived internally - that's what keeps
+// this at 6 params (tokens/match/src/s/outbuf/outcount) instead of 7.
+// Recursive; returns the updated outcount (AIC has no by-reference ints,
+// so the running count threads through as an ordinary return value, the
+// same pattern decl_add already uses).
+[§ collect_reads [[$ tokens] [$ match] [$ src] s [$ outbuf] outcount] [D
+  [! tag [@@ tokens [* s 3]]]
+  [? [== tag 1]
+    [D
+      [! e [@@ match s]]
+      [! headop [+ s 1]]
+      [! is_assign [&& [== [@@ tokens [* headop 3]] 3] [&& [== [@@ tokens [+ [* headop 3] 2]] 1] [== [@ src [@@ tokens [+ [* headop 3] 1]]] 33]]]]
+      [! p [+ s 2]]
+      [! first 1]
+      [W [< p e] [D
+        [! ce [next_child_end tokens match p]]
+        [? [&& is_assign first] [D] [! outcount [collect_reads tokens match src p outbuf outcount]]]
+        [! first 0]
+        [! p [+ ce 1]]
+      ]]
+      [^ outcount]
+    ]
+    [? [== tag 3]
+      [D [? [is_numeric_atom src [@@ tokens [+ [* s 3] 1]] [@@ tokens [+ [* s 3] 2]]] [^ outcount]
+        [D [@@! outbuf [* outcount 2] [@@ tokens [+ [* s 3] 1]]] [@@! outbuf [+ [* outcount 2] 1] [@@ tokens [+ [* s 3] 2]]] [^ [+ outcount 1]]]]]
+      [^ outcount]]]
+]]
+
+[§ classify_stmt [[$ tokens] [$ src] [$ funcs] func_count mstart mend] [D [! op_tok 0] [! htag 0] [! hst 0] [! hln 0] [! result -2] [? [!= [@@ tokens [* mstart 3]] 1] [! result -1] [D [! op_tok [+ mstart 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [? [== result -2] [D [! fi 0] [! found_fn -1] [! name_tok 0] [W [&& [== found_fn -1] [< fi func_count]] [D [! name_tok [@@ funcs [+ [* fi 4] 1]]] [? [streq src hst hln [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]] [! found_fn fi] [D]] [! fi [+ fi 1]]]] [? [!= found_fn -1] [! result 0] [! result -1]]] [D]] [^ result]]]
+
+
+[! h [O "code.aic" "r"]]
+[! n [Z h]]
+[! src [R h n]]
+[! tokens [H [* [+ n 1] 24]]]
+[! i 0]
+[! tok_count 0]
+[! in_comment 0]
+[! in_string 0]
+[! string_start 0]
+[! atom_start 0]
+[! c 0]
+[W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
+[X h]
+
+[! stack [H [* tok_count 8]]]
+[! match [H [* tok_count 8]]]
+[! sp 0]
+[! err 0]
+[! pairs 0]
+[! k 0]
+[! tag 0]
+[! j 0]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [@@! stack sp j] [! sp [+ sp 1]]] [? [== tag 2] [? [== sp 0] [? [== err 0] [D [. "ParseError: unexpected ']' at byte" [@@ tokens [+ [* j 3] 1]]] [! err 1]] [D]] [D [! sp [- sp 1]] [! k [@@ stack sp]] [@@! match k j] [@@! match j k] [! pairs [+ pairs 1]]]] [D]]] [! j [+ j 1]]]
+[? [&& [== err 0] [> sp 0]] [D [! k [@@ stack [- sp 1]]] [. "ParseError: unclosed '[' at byte" [@@ tokens [+ [* k 3] 1]]] [! err 1]] [D]]
+
+[! funcs [H [* [+ tok_count 1] 32]]]
+[! mains [H [* [+ tok_count 1] 16]]]
+[! func_count 0]
+[! main_count 0]
+[! form_end 0]
+[! name_tok 0]
+[! params_open_tok 0]
+[! j 0]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [! form_end [@@ match j]] [! name_tok [+ j 2]] [? [is_section tokens src [+ j 1]] [D [? [== [@@ tokens [* name_tok 3]] 1] [! params_open_tok [+ [@@ match name_tok] 1]] [! params_open_tok [+ name_tok 1]]] [@@! funcs [* func_count 4] j] [@@! funcs [+ [* func_count 4] 1] name_tok] [@@! funcs [+ [* func_count 4] 2] params_open_tok] [@@! funcs [+ [* func_count 4] 3] form_end] [! func_count [+ func_count 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] form_end] [! main_count [+ main_count 1]]]] [! j [+ form_end 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] j] [! main_count [+ main_count 1]] [! j [+ j 1]]]]]
+
+// --- stage 4: per-function param parsing + declared-variable collection --
+// For each function record from stage 3, parse its parameter list (each
+// entry is either a bare atom -> INT, or '[$ name]' -> STR, mirroring
+// _parse_name_decl in aic_codegen.py) and separately scan the whole body
+// for every '[' '!' <atom> pattern at ANY nesting depth (a linear scan
+// over the token range works for this - unlike stage 3, we don't need to
+// skip nested forms, we WANT to see inside them), mirroring
+// collect_declarations. Each function gets its own two heap buffers
+// (params, declared-names), sized generously off its own token span so no
+// cross-function bound has to be computed up front.
+[! fn_param_buf [H [* [+ func_count 1] 8]]]
+[! fn_param_count [H [* [+ func_count 1] 8]]]
+[! fn_decl_buf [H [* [+ func_count 1] 8]]]
+[! fn_decl_count [H [* [+ func_count 1] 8]]]
+[! fi 0]
+[! po 0]
+[! pc 0]
+[! p 0]
+[! pn 0]
+[! ptype 0]
+[! pnext 0]
+[! span 0]
+[! pcnt 0]
+[! dcnt 0]
+[! bstart 0]
+[! b 0]
+[! fend 0]
+[W [< fi func_count] [D
+  [! po [@@ funcs [+ [* fi 4] 2]]]
+  [! fend [@@ funcs [+ [* fi 4] 3]]]
+  [! pc [@@ match po]]
+  [! span [+ [- fend [@@ funcs [* fi 4]]] 1]]
+  [! pbuf [H [* span 16]]]
+  [! dbuf [H [* span 16]]]
+  [! pcnt 0]
+  [! dcnt 0]
+  [! p [+ po 1]]
+  [W [< p pc] [D
+    [? [== [@@ tokens [* p 3]] 1]
+      [D [! pn [+ p 2]] [! ptype 1] [! pnext [+ [@@ match p] 1]]]
+      [D [! pn p] [! ptype 0] [! pnext [+ p 1]]]]
+    [@@! pbuf [* pcnt 2] pn]
+    [@@! pbuf [+ [* pcnt 2] 1] ptype]
+    [! pcnt [+ pcnt 1]]
+    [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* pn 3] 1]] [@@ tokens [+ [* pn 3] 2]]]]
+    [! p pnext]
+  ]]
+  [! bstart [+ pc 1]]
+  [! b bstart]
+  [W [< b fend] [D
+    [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] fend] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
+      [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
+      [D]]
+    [! b [+ b 1]]
+  ]]
+  [@@$! fn_param_buf fi pbuf]
+  [@@! fn_param_count fi pcnt]
+  [@@$! fn_decl_buf fi dbuf]
+  [@@! fn_decl_count fi dcnt]
+  [! fi [+ fi 1]]
+]]
+
+// main's declared set: same '!' scan, over every token spanned by the
+// 'mains' ranges from stage 3 (which together are exactly main's tokens,
+// excluding all function bodies).
+[! main_decl [H [* [+ tok_count 1] 16]]]
+[! main_decl_count 0]
+[! mi 0]
+[! mstart 0]
+[! mend 0]
+[W [< mi main_count] [D
+  [! mstart [@@ mains [* mi 2]]]
+  [! mend [@@ mains [+ [* mi 2] 1]]]
+  [! b mstart]
+  [W [<= b mend] [D
+    [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] tok_count] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
+      [! main_decl_count [decl_add src main_decl main_decl_count [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
+      [D]]
+    [! b [+ b 1]]
+  ]]
+  [! mi [+ mi 1]]
+]]
+
+[. "FUNC_COUNT" func_count]
+[. "MAIN_COUNT" main_count]
+[! fi 0]
+[W [< fi func_count] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 3]
+    [! fname [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+    [! fname "(complex-name)"]]
+  [. "FUNC" fi fname "params=" [@@ fn_param_count fi] "declared=" [@@ fn_decl_count fi]]
+  [! fi [+ fi 1]]
+]]
+[. "MAIN_DECLARED" main_decl_count]
+
+// stage 5 verification: classify every main-level statement and print a
+// histogram by code. STMT_UNKNOWN(-1) must be 0 for a real program - any
+// nonzero there is either a malformed statement or a genuinely unhandled
+// symbol, both worth knowing about before codegen is attempted.
+[D [! hist [H [* 25 8]]] [! mi 0] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]] [! mi [+ mi 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]]]
+
+// --- stage 6a driver: full-depth statement histogram ----------------------
+// Same buckets as stage 5's, plus index 0 for "structurally unrecognized /
+// could be a call, classify_op_only can't tell" (see comment above that
+// function) - stage 5's own top-level counts above are unaffected by this.
+[! hist2 [H [* 25 8]]]
+[! mi 0]
+[W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [recurse_stmt tokens match src mstart mend hist2] [! mi [+ mi 1]]]]
+[! fi 0]
+[W [< fi func_count] [D
+  [! po2 [@@ funcs [+ [* fi 4] 2]]]
+  [! fend2 [@@ funcs [+ [* fi 4] 3]]]
+  [! pc2 [@@ match po2]]
+  [! b2 [+ pc2 1]]
+  [W [< b2 fend2] [D [! ce2 [next_child_end tokens match b2]] [recurse_stmt tokens match src b2 ce2 hist2] [! b2 [+ ce2 1]]]]
+  [! fi [+ fi 1]]
+]]
+[. "=== stage 6a: full-depth histogram (main + every function body, all nesting) ==="]
+[. "ALL_CALL_OR_UNKNOWN(no-fn-check)=" [@@ hist2 0]]
+[. "ALL_UNKNOWN(-1)=" [@@ hist2 1]]
+[. "ALL_DOT(.)=" [@@ hist2 3]]
+[. "ALL_ASSIGN(!)=" [@@ hist2 4]]
+[. "ALL_IF(?)=" [@@ hist2 5]]
+[. "ALL_WHILE(W)=" [@@ hist2 6]]
+[. "ALL_DO(D)=" [@@ hist2 7]]
+[. "ALL_RETURN(^)=" [@@ hist2 8]]
+[. "ALL_BYTEOP(@)=" [@@ hist2 9]]
+[. "ALL_BYTESET(@!)=" [@@ hist2 10]]
+[. "ALL_WORDOP(@@)=" [@@ hist2 11]]
+[. "ALL_WORDSET(@@!)=" [@@ hist2 12]]
+[. "ALL_WORDPTR(@@$)=" [@@ hist2 13]]
+[. "ALL_WORDPTRSET(@@$!)=" [@@ hist2 14]]
+
+// --- stage 6b driver: expression read validation --------------------------
+// For every top-level statement (main's, and each function's own body,
+// each checked ONLY against that function's own declared set - never
+// cross-contaminated, matching "no implicit access to caller/global
+// variables") collect every variable read and confirm it resolves. A
+// nonzero UNRESOLVED count here means compiler.aic itself would fail
+// aic_codegen.py's check_reads - the exact self-consistency check a
+// self-hosting compiler needs to be able to run on its own source.
+[! outbuf [H [* [* tok_count 2] 8]]]
+[! total_reads 0] [! total_resolved 0] [! total_unresolved 0]
+[! mi 0]
+[W [< mi main_count] [D
+  [! mstart [@@ mains [* mi 2]]]
+  [! oc [collect_reads tokens match src mstart outbuf 0]]
+  [! ri 0]
+  [W [< ri oc] [D
+    [! rst [@@ outbuf [* ri 2]]] [! rln [@@ outbuf [+ [* ri 2] 1]]]
+    [! total_reads [+ total_reads 1]]
+    [? [decl_contains src main_decl main_decl_count rst rln]
+      [! total_resolved [+ total_resolved 1]]
+      [D [! total_unresolved [+ total_unresolved 1]] [. "SemanticError: unresolved read in main at byte" rst "len" rln]]]
+    [! ri [+ ri 1]]
+  ]]
+  [! mi [+ mi 1]]
+]]
+[. "=== stage 6b: read validation, main ==="]
+[. "MAIN_READS_TOTAL=" total_reads "RESOLVED=" total_resolved "UNRESOLVED=" total_unresolved]
+
+[! fi 0]
+[! fn_reads_total 0] [! fn_reads_resolved 0] [! fn_reads_unresolved 0]
+[W [< fi func_count] [D
+  [! po3 [@@ funcs [+ [* fi 4] 2]]]
+  [! fend3 [@@ funcs [+ [* fi 4] 3]]]
+  [! pc3 [@@ match po3]]
+  [! b3 [+ pc3 1]]
+  [! dbuf3 [@@$ fn_decl_buf fi]]
+  [! dcount3 [@@ fn_decl_count fi]]
+  [W [< b3 fend3] [D
+    [! ce3 [next_child_end tokens match b3]]
+    [! oc3 [collect_reads tokens match src b3 outbuf 0]]
+    [! ri3 0]
+    [W [< ri3 oc3] [D
+      [! rst3 [@@ outbuf [* ri3 2]]] [! rln3 [@@ outbuf [+ [* ri3 2] 1]]]
+      [! fn_reads_total [+ fn_reads_total 1]]
+      [? [decl_contains src dbuf3 dcount3 rst3 rln3]
+        [! fn_reads_resolved [+ fn_reads_resolved 1]]
+        [D [! fn_reads_unresolved [+ fn_reads_unresolved 1]] [. "SemanticError: unresolved read in fn" fi "at byte" rst3 "len" rln3]]]
+      [! ri3 [+ ri3 1]]
+    ]]
+    [! b3 [+ ce3 1]]
+  ]]
+  [! fi [+ fi 1]]
+]]
+[. "=== stage 6b: read validation, functions ==="]
+[. "FN_READS_TOTAL=" fn_reads_total "RESOLVED=" fn_reads_resolved "UNRESOLVED=" fn_reads_unresolved]
