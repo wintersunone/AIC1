@@ -1,0 +1,28 @@
+[§ [$ mkmsg] [] [^ "hello"]]
+
+[! x 7]
+[! y 3]
+[! buf [H 32]]
+[! ncount [L buf]]
+[! strres [N x]]
+[! vres [V "123"]]
+[! fh [O "dummy_path.txt" "r"]]
+[! sz [Z fh]]
+[! rbuf [R fh 10]]
+
+[. x]
+[. "a literal string"]
+[. "two" x]
+[. x y]
+[. [mkmsg]]
+[. [? [> x 0] "pos" "nonpos"]]
+
+[K fh rbuf]
+[X fh]
+
+[H 8]
+[L buf]
+[N x]
+[V "42"]
+
+[^ x]
