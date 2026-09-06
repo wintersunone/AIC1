@@ -1,0 +1,1504 @@
+// compiler.aic - the self-hosted AIC compiler, written in AIC.
+//
+// Progress so far (each stage verified byte-for-byte identical between
+// the Python interpreter and a gcc-assembled native binary before being
+// trusted as a foundation for the next one):
+//   Stage 1 - tokenizer: walks the source byte-by-byte with '@', classifying
+//             whitespace / brackets / string literals / comments / atoms,
+//             writing {tag, start, len} triples into a word-addressed
+//             token-record buffer via write_token.
+//   Stage 2 - bracket matching: a stack-based pass builds a match[] table -
+//             for every '[' token index, the index of its matching ']' -
+//             which gives the flat token stream tree-equivalent structure
+//             (skip a nested form with j = match[j]) without ever
+//             allocating real node objects.
+//   Stage 3 - top-level form registration: walks the stream at depth 0
+//             (jumping straight to match[j] instead of counting depth),
+//             classifying each top-level form as a function definition
+//             (head symbol is the two-byte atom section-sign, matched with
+//             is_section since this tokenizer is byte-oriented and never
+//             UTF-8-decodes) or a main-body statement.
+//   Stage 4 - per-function param parsing + declared-name collection: for
+//             each function record from stage 3, splits its parameter
+//             list into (name, type) pairs - bare atom = INT, '[$ name]'
+//             = STR, mirroring _parse_name_decl in aic_codegen.py - then
+//             scans the body for every '[' '!' <atom> pattern at any
+//             nesting depth (mirroring collect_declarations), seeding the
+//             declared-name set with the params first so a re-assigned
+//             param isn't miscounted as a fresh declaration. main's own
+//             declared set is collected the same way over the token
+//             ranges stage 3 tagged as non-function forms.
+//
+//   Stage 5 - statement head classification: classify_stmt mirrors
+//             compile_stmt's own dispatch, but only for each program's
+//             TOP-LEVEL statements (main's, or a function's outermost
+//             body forms) - nothing nested inside a W/D/'?' body was
+//             looked at yet.
+//   Stage 6 - full-depth coverage, in two halves:
+//     6a: recurse_stmt walks into every '?'/'W'/'D' body at any nesting
+//         depth (not just top-level), extending stage 5's histogram to
+//         the WHOLE program. Uses a reduced classifier (classify_op_only)
+//         since native codegen's 6-param-per-function cap leaves no room
+//         to also thread funcs/func_count through a recursive call - see
+//         the comment above classify_op_only for the honest tradeoff.
+//     6b: collect_reads walks every expression tree (skipping op/function
+//         names in head position and '!'s own write target) and collects
+//         every genuine variable READ, which is then checked against the
+//         declared-name sets stage 4 already built (main_decl, or each
+//         function's own fn_decl_buf) - the read-validation half of
+//         aic_codegen.py's own check_reads, reimplemented in AIC.
+//   Stage 7 - full expression emitter (emit_expr): literals, local reads
+//             (decl_index -> slot offset), binary arithmetic/compare/
+//             shift ops, byte/word heap ops (@/@!/@@/@@!/@@$/@@$!),
+//             function calls (<=6 args, SysV ABI), and short-circuit
+//             &&/|| plus ternary '?' used as a value. Verified byte-for-
+//             byte identical against aic_codegen.py's own
+//             Codegen.compile_expr (test_stage7b.aic / stage7d_src.aic).
+//   Stage 8a - statement emitter (compile_stmt): '!' (assign), '^'
+//             (return), '?' (if/else), 'W' (while), 'D' (do-block), and
+//             bare byte/word-op/call statements. Verified byte-for-byte
+//             identical against aic_codegen.py's own Codegen.compile_stmt
+//             (test_stage8.aic / stage8_src.aic) - this included finding
+//             and fixing a real bug: emit_return was calling emit_expr on
+//             the '^' head-symbol token itself instead of the token one
+//             past it, so every '[^ expr]' silently emitted a bogus
+//             0(%rbp) read instead of expr's real value.
+//   Stage 8b - print statements plus top-level libc ops (H/L/N/V/O/Z/R/K/X)
+//             in statement/expression-emitter positions. Verified byte-for-
+//             byte identical against aic_codegen.py's own Codegen.compile_stmt
+//             (test_stage8b.aic / stage8b_src.aic), including string literals
+//             and string-returning user functions in print position.
+//
+//   Stage 9 - full-program assembly builder: main/function prologues,
+//             frame sizing, param copy-in, zero-init, per-scope type tables,
+//             rodata prefix/body/note assembly stitching.
+//   Stage 10 - self-hosting bootstrap assembly diff: compiler.aic compiled
+//              by aic_codegen.py and compiler.aic running under compiler.py
+//              now produce byte-for-byte identical assembly on this host.
+//
+//   Native closure on this Windows host: the Linux/SysV assembly can be
+//              postprocessed into a MinGW bridge executable. That native
+//              compiler_gen0_mingw.exe compiled compiler.aic again and its
+//              output matched compiler_gen0.s byte-for-byte.
+//
+// Next: decide whether to keep the MinGW bridge as the host-native route,
+// or turn the bridge into a first-class Windows backend emitted directly.
+//
+// Helper functions written in AIC itself, not the compiler: is_section,
+// slice_str (real heap string-building: allocate + loop with @/@!),
+// streq, decl_add (a dedup-on-insert array, itself just H + @@/@@!).
+
+[§ is_space [b] [^ [|| [== b 32] [|| [== b 9] [|| [== b 10] [== b 13]]]]]]
+[§ is_atom_char [b] [^ [== [|| [is_space b] [|| [== b 91] [|| [== b 93] [== b 34]]]] 0]]]
+[§ write_token [[$ tokens] idx tag start len] [D [@@! tokens [* idx 3] tag] [@@! tokens [+ [* idx 3] 1] start] [@@! tokens [+ [* idx 3] 2] len] [^ idx]]]
+[§ is_section [[$ tokens] [$ src] t] [D [! tg [@@ tokens [* t 3]]] [! st [@@ tokens [+ [* t 3] 1]]] [! ln [@@ tokens [+ [* t 3] 2]]] [^ [&& [== tg 3] [&& [== ln 2] [&& [== [@ src st] 194] [== [@ src [+ st 1]] 167]]]]]]]
+[§ [$ slice_str] [[$ src] start len] [D [! buf [H len]] [! k 0] [W [< k len] [@! buf k [@ src [+ start k]]] [! k [+ k 1]]] [^ buf]]]
+[§ streq [[$ src] s1 l1 s2 l2] [D [! ok 1] [? [!= l1 l2] [! ok 0] [D]] [! k 0] [W [&& ok [< k l1]] [? [!= [@ src [+ s1 k]] [@ src [+ s2 k]]] [! ok 0] [D]] [! k [+ k 1]]] [^ ok]]]
+[§ decl_add [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [? found [D] [D [@@! recs [* count 2] start] [@@! recs [+ [* count 2] 1] len] [! count [+ count 1]]]] [^ count]]]
+
+// --- stage 5: statement head classification -------------------------------
+// Mirrors compile_stmt's dispatch in aic_codegen.py: given a statement's
+// head symbol, decide whether it's a built-in op ('.','!','?','W','D','^',
+// a byte/word/libc op) or a call to one of the functions stage 3 already
+// found - the last thing needed before a body can be walked and codegen'd.
+// classify_op1..4 compare the head symbol's raw bytes directly (cheaper
+// and simpler than building heap string literals to streq against, since
+// every built-in op is 1-4 ASCII bytes with no ambiguity by length+bytes).
+// Falls through to a streq scan against known function names only when no
+// built-in op matched - exactly the "elif op in self.functions" tier in
+// aic_codegen.py's own check_reads/compile_stmt chain.
+[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 -2]]]]]]]]]]]]]]]]]]
+[§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 -2]]]]]
+[§ classify_op3 [b0 b1 b2] [^ [? [&& [== b0 64] [&& [== b1 64] [== b2 33]]] 10 [? [&& [== b0 64] [&& [== b1 64] [== b2 36]]] 11 -2]]]]
+[§ classify_op4 [b0 b1 b2 b3] [^ [? [&& [== b0 64] [&& [== b1 64] [&& [== b2 36] [== b3 33]]]] 12 -2]]]
+
+// --- stage 6a: recursive structural classification -----------------------
+// classify_stmt (below) needs 6 params (tokens/src/funcs/func_count/
+// mstart/mend) just to resolve "is this a call to a KNOWN function" - the
+// native-codegen hard cap is 6 params per function, so a recursive helper
+// that also threads a histogram buffer through has no room left for
+// funcs/func_count. classify_op_only is the same dispatch minus that one
+// tier: it still identifies every built-in op exactly (byte-for-byte
+// identical to classify_stmt for '.','!','?','W','D','^', byte/word/libc
+// ops, and section-defs), it just can't tell "genuine call to a known
+// AIC function" apart from "truly unrecognized" - both fall into one
+// bucket (-2). That's a real, deliberate fidelity loss versus stage 5's
+// top-level histogram (which keeps using the full classify_stmt, unaffected)
+// - honest tradeoff, not a bug: the only thing recursion structurally
+// NEEDS to detect correctly is W/D/'?' (to know what to recurse into), and
+// classify_op_only gets those exactly right.
+[§ classify_op_only [[$ tokens] [$ src] s] [D [! result -2] [? [!= [@@ tokens [* s 3]] 1] [! result -1] [D [! op_tok [+ s 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [^ result]]]
+
+// A "child" of a bracketed form starting at token p is either another
+// bracketed form (p..match[p]) or a single atom/string token (p..p) -
+// next_child_end returns whichever end applies, so a caller can always
+// advance with `p = next_child_end(...) + 1` regardless of which case it
+// was, mirroring the exact child-walking idiom stage 3/4 already use
+// inline (this just gives it a name so stage 6 can reuse it recursively).
+[§ next_child_end [[$ tokens] [$ match] p] [^ [? [== [@@ tokens [* p 3]] 1] [@@ match p] p]]]
+
+// recurse_stmt: classify a statement at [s,e], then - for exactly the
+// three compound forms ('?','W','D') - recurse into every nested
+// statement its body actually contains, at any depth, accumulating into
+// the SAME shared histogram. This is what turns stage 5's "top-level
+// statements only" count into a true whole-program count.
+[§ recurse_stmt [[$ tokens] [$ match] [$ src] s e [$ hist]] [D
+  [! code [classify_op_only tokens src s]]
+  [! idx [+ code 2]]
+  [@@! hist idx [+ [@@ hist idx] 1]]
+  [? [== code 4] [D
+      [! p [+ s 2]]
+      [! ce [next_child_end tokens match p]]
+      [! p [+ ce 1]]
+      [W [< p e] [D [! ce2 [next_child_end tokens match p]] [recurse_stmt tokens match src p ce2 hist] [! p [+ ce2 1]]]]
+    ] [D]]
+  [? [== code 5] [D
+      [! p [+ s 2]]
+      [W [< p e] [D [! ce [next_child_end tokens match p]] [recurse_stmt tokens match src p ce hist] [! p [+ ce 1]]]]
+    ] [D]]
+  [? [== code 3] [D
+      [! p [+ s 2]]
+      [! ce [next_child_end tokens match p]]
+      [! p [+ ce 1]]
+      [? [< p e] [D
+          [! ce2 [next_child_end tokens match p]]
+          [recurse_stmt tokens match src p ce2 hist]
+          [! p [+ ce2 1]]
+          [? [< p e] [D [! ce3 [next_child_end tokens match p]] [recurse_stmt tokens match src p ce3 hist]] [D]]
+        ] [D]]
+    ] [D]]
+  [^ code]
+]]
+
+// --- stage 6b: expression-level read validation ---------------------------
+// The AIC-in-AIC equivalent of check_reads' read-validation half: walk an
+// expression/statement tree and collect every atom that's a genuine
+// variable READ - skipping op/function-name symbols in head position and
+// skipping '!'s own assignment target (a write, not a read) - so each one
+// can be checked against the declared-name set stage 4 already built.
+// Deliberately NOT covered (scope of this increment, not a hidden bug):
+// type inference/mismatch checking (that's check_reads' OTHER half) and
+// '[$ name]' markers, which never appear inside a statement body in this
+// codebase's own style. is_numeric_atom must check the digit AFTER a '-',
+// not just its presence - '-x' is a variable, not a negative literal.
+[§ is_numeric_atom [[$ src] start len] [D [! b0 [@ src start]] [! b1 [? [> len 1] [@ src [+ start 1]] 0]] [^ [|| [&& [>= b0 48] [<= b0 57]] [&& [== b0 45] [&& [> len 1] [&& [>= b1 48] [<= b1 57]]]]]]]]
+
+[§ decl_contains [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [^ found]]]
+
+// collect_reads needs no explicit 'end' param: for a bracketed form its
+// own extent is just match[s], derived internally - that's what keeps
+// this at 6 params (tokens/match/src/s/outbuf/outcount) instead of 7.
+// Recursive; returns the updated outcount (AIC has no by-reference ints,
+// so the running count threads through as an ordinary return value, the
+// same pattern decl_add already uses).
+[§ collect_reads [[$ tokens] [$ match] [$ src] s [$ outbuf] outcount] [D
+  [! tag [@@ tokens [* s 3]]]
+  [? [== tag 1]
+    [D
+      [! e [@@ match s]]
+      [! headop [+ s 1]]
+      [! is_assign [&& [== [@@ tokens [* headop 3]] 3] [&& [== [@@ tokens [+ [* headop 3] 2]] 1] [== [@ src [@@ tokens [+ [* headop 3] 1]]] 33]]]]
+      [! p [+ s 2]]
+      [! first 1]
+      [W [< p e] [D
+        [! ce [next_child_end tokens match p]]
+        [? [&& is_assign first] [D] [! outcount [collect_reads tokens match src p outbuf outcount]]]
+        [! first 0]
+        [! p [+ ce 1]]
+      ]]
+      [^ outcount]
+    ]
+    [? [== tag 3]
+      [D [? [is_numeric_atom src [@@ tokens [+ [* s 3] 1]] [@@ tokens [+ [* s 3] 2]]] [^ outcount]
+        [D [@@! outbuf [* outcount 2] [@@ tokens [+ [* s 3] 1]]] [@@! outbuf [+ [* outcount 2] 1] [@@ tokens [+ [* s 3] 2]]] [^ [+ outcount 1]]]]]
+      [^ outcount]]]
+]]
+
+[§ classify_stmt [[$ tokens] [$ src] [$ funcs] func_count mstart mend] [D [! op_tok 0] [! htag 0] [! hst 0] [! hln 0] [! result -2] [? [!= [@@ tokens [* mstart 3]] 1] [! result -1] [D [! op_tok [+ mstart 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [? [== result -2] [D [! fi 0] [! found_fn -1] [! name_tok 0] [W [&& [== found_fn -1] [< fi func_count]] [D [! name_tok [@@ funcs [+ [* fi 4] 1]]] [? [streq src hst hln [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]] [! found_fn fi] [D]] [! fi [+ fi 1]]]] [? [!= found_fn -1] [! result 0] [! result -1]]] [D]] [^ result]]]
+
+// --- stage 7: full expression emitter (emit_expr) --------------------------
+// Ports aic_codegen.py's Codegen.compile_expr into AIC: literals, local
+// reads (decl_index -> slot offset), binary arithmetic/compare/shift ops,
+// byte/word heap ops (@/@!/@@/@@!/@@$/@@$!), function calls (<=6 args,
+// SysV ABI), and short-circuit &&/|| plus ternary '?' used as a value.
+// Verified byte-for-byte identical against aic_codegen.py's own
+// Codegen.compile_expr output (see test_stage7b.aic / stage7d_src.aic).
+//
+// --- stage 8: statement emitter (compile_stmt) ------------------------------
+// Ports aic_codegen.py's Codegen.compile_stmt into AIC: '!' (assign),
+// '^' (return), '?' (if/else), 'W' (while), 'D' (do-block), and bare
+// byte/word/libc-op/call statements plus '.' print dispatch.
+// Stage 8a covered control-flow/bare byte-word-call statements; Stage 8b
+// added static print typing, string-literal emission, and libc op codegen.
+// Both slices were verified byte-for-byte against aic_codegen.py.
+
+[§ decl_index [[$ src] [$ recs] count start len] [D [! i 0] [! result -1] [W [&& [== result -1] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! result i] [D]] [! i [+ i 1]]]] [^ result]]]
+
+[§ strlt [[$ src] s1 l1 s2 l2] [D [! minlen [? [< l1 l2] l1 l2]] [! i 0] [! result -1] [W [&& [== result -1] [< i minlen]] [D [! b1 [@ src [+ s1 i]]] [! b2 [@ src [+ s2 i]]] [? [< b1 b2] [! result 1] [? [> b1 b2] [! result 0] [D]]] [! i [+ i 1]]]] [? [== result -1] [! result [? [< l1 l2] 1 0]] [D]] [^ result]]]
+
+[§ sort_decls [[$ src] [$ recs] lo hi] [D [! i lo] [W [< i hi] [D [! minidx i] [! j [+ i 1]] [W [< j hi] [D [? [strlt src [@@ recs [* j 2]] [@@ recs [+ [* j 2] 1]] [@@ recs [* minidx 2]] [@@ recs [+ [* minidx 2] 1]]] [! minidx j] [D]] [! j [+ j 1]]]] [? [!= minidx i] [D [! ts [@@ recs [* minidx 2]]] [! tl [@@ recs [+ [* minidx 2] 1]]] [@@! recs [* minidx 2] [@@ recs [* i 2]]] [@@! recs [+ [* minidx 2] 1] [@@ recs [+ [* i 2] 1]]] [@@! recs [* i 2] ts] [@@! recs [+ [* i 2] 1] tl]] [D]] [! i [+ i 1]]]] [^ 0]]]
+
+
+
+// count_params: number of top-level children in a function's param list -
+// [po, match[po]] - walking with next_child_end the same way every other
+// child-walk in this codebase does. Only the COUNT is needed here (which
+// argument register each position lands in); stage 4's fuller param
+// parsing in compiler.aic (name/type per param) isn't needed for a call
+// site, only for compiling the callee's own body - out of scope here.
+[§ count_params [[$ tokens] [$ match] po] [D [! pc [@@ match po]] [! p [+ po 1]] [! n 0] [W [< p pc] [D [! p [+ [next_child_end tokens match p] 1]] [! n [+ n 1]]]] [^ n]]]
+
+// argreg_name: SysV integer-argument register for position i (0-5),
+// matching aic_codegen.py's _ARG_REGS exactly. All branches return a
+// string literal, so this satisfies the same "both branches same type"
+// rule '?'-as-a-value enforces on itself.
+[§ [$ argreg_name] [i] [^ [? [== i 0] "%rdi" [? [== i 1] "%rsi" [? [== i 2] "%rdx" [? [== i 3] "%rcx" [? [== i 4] "%r8" "%r9"]]]]]]]
+
+[§ binop_code1 [b] [^ [? [== b 43] 1 [? [== b 45] 2 [? [== b 42] 3 [? [== b 47] 4 [? [== b 37] 5 [? [== b 38] 6 [? [== b 124] 7 [? [== b 60] 8 [? [== b 62] 9 -1]]]]]]]]]]]
+[§ binop_code2 [b0 b1] [^ [? [&& [== b0 61] [== b1 61]] 10 [? [&& [== b0 33] [== b1 61]] 11 [? [&& [== b0 60] [== b1 61]] 12 [? [&& [== b0 62] [== b1 61]] 13 [? [&& [== b0 94] [== b1 94]] 14 [? [&& [== b0 60] [== b1 60]] 15 [? [&& [== b0 62] [== b1 62]] 16 -1]]]]]]]]]
+[§ binop_classify [[$ src] hst hln] [D [! b0 [@ src hst]] [! result -1] [? [== hln 1] [! result [binop_code1 b0]] [D]] [? [== hln 2] [D [! b1 [@ src [+ hst 1]]] [! result [binop_code2 b0 b1]]] [D]] [^ result]]]
+
+// classify_op1/2/3/4: copied verbatim from compiler.aic - same codes, same
+// meaning (7=@ 8=@! 9=@@ 10=@@! 11=@@$ 12=@@$!) - reused here rather than
+// reinvented so byte/word-op detection stays byte-for-byte consistent with
+// the real statement-head classifier already verified in compiler.aic.
+
+[§ emit_byte_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [! a1e [next_child_end tokens match arg1]]
+  [! arg2 [+ a1e 1]]
+  [? [== code 7] [D
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    movq    %rax, %rbx\n"]
+      [K h "    popq    %rax\n"]
+      [K h "    movzbq  (%rax,%rbx), %rax\n"]
+    ] [D]]
+  [? [== code 8] [D
+      [! a2e [next_child_end tokens match arg2]]
+      [! arg3 [+ a2e 1]]
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg3 ctx]
+      [K h "    popq    %rbx\n"]
+      [K h "    popq    %rcx\n"]
+      [K h "    movb    %al, (%rcx,%rbx)\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+[§ emit_word_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [! a1e [next_child_end tokens match arg1]]
+  [! arg2 [+ a1e 1]]
+  [? [|| [== code 9] [== code 11]] [D
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    movq    %rax, %rbx\n"]
+      [K h "    popq    %rax\n"]
+      [K h "    movq    (%rax,%rbx,8), %rax\n"]
+    ] [D]]
+  [? [|| [== code 10] [== code 12]] [D
+      [! a2e [next_child_end tokens match arg2]]
+      [! arg3 [+ a2e 1]]
+      [emit_expr tokens match src arg1 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg2 ctx] [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src arg3 ctx]
+      [K h "    popq    %rbx\n"]
+      [K h "    popq    %rcx\n"]
+      [K h "    movq    %rax, (%rcx,%rbx,8)\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+// emit_call: ctx slot 4 = funcs table ptr, slot 5 = fn_param_count table
+// ptr (both set up once by the driver, read here via '@@$' since they're
+// pointers, not plain ints). Pushes every argument left-to-right, then
+// pops into pcount registers counting DOWN from pcount-1 to 0 - the same
+// "pop index tracks argument index, independent of push order" trick
+// aic_codegen.py's own compile_expr uses, so argument N always lands in
+// argreg_name(N) regardless of how many arguments there are.
+[§ emit_call [[$ tokens] [$ match] [$ src] s [$ ctx] fi] [D
+  [! h [@@ ctx 0]]
+  [! funcs [@@$ ctx 4]]
+  [! fpc [@@$ ctx 5]]
+  [! pcount [@@ fpc fi]]
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+  [! nst [@@ tokens [+ [* name_tok 3] 1]]]
+  [! nln [@@ tokens [+ [* name_tok 3] 2]]]
+  [! op_tok [+ s 1]]
+  [! e [@@ match s]]
+  [! p [+ op_tok 1]]
+  [W [< p e] [D
+    [emit_expr tokens match src p ctx]
+    [K h "    pushq   %rax\n"]
+    [! p [+ [next_child_end tokens match p] 1]]
+  ]]
+  [! i [- pcount 1]]
+  [W [>= i 0] [D
+    [K h "    popq    "] [K h [argreg_name i]] [K h "\n"]
+    [! i [- i 1]]
+  ]]
+  [K h "    call    aicfn_"]
+  [K h [slice_str src nst nln]]
+  [K h "\n"]
+  [^ 0]
+]]
+
+[§ new_label_num [[$ ctx]] [D [! v [+ [@@ ctx 1] 1]] [@@! ctx 1 v] [^ v]]]
+
+// resolve_func: scan the funcs table (ctx slot 4, count in slot 6) for a
+// name matching src[hst..hst+hln) - returns its index, or -1 if no
+// function has that name. Shared by emit_expr's call fallback and
+// emit_stmt's statement-head fallback, so "is this a call" is answered
+// identically in both contexts rather than by two copies of the same
+// scan that could quietly diverge.
+[§ resolve_func [[$ tokens] [$ src] hst hln [$ ctx]] [D
+  [! funcs [@@$ ctx 4]]
+  [! fcount [@@ ctx 6]]
+  [! fi 0]
+  [! found -1]
+  [W [&& [== found -1] [< fi fcount]] [D
+    [! nmtok [@@ funcs [+ [* fi 4] 1]]]
+    [? [== [@@ tokens [* nmtok 3]] 1] [! nmtok [+ nmtok 2]] [D]]
+    [? [streq src hst hln [@@ tokens [+ [* nmtok 3] 1]] [@@ tokens [+ [* nmtok 3] 2]]] [! found fi] [D]]
+    [! fi [+ fi 1]]
+  ]]
+  [^ found]
+]]
+
+// streq_ptr / string_label_num: ctx slot 8 = count of distinct rodata strings,
+// ctx slot 11 = pointer table. This mirrors Python Codegen.string_label:
+// repeated literals and synthetic fopen modes reuse the same aicstr_N label.
+[§ streq_ptr [[$ a] [$ b]] [D
+  [! alen [L a]]
+  [! blen [L b]]
+  [? [!= alen blen] [^ 0] [D]]
+  [! ok 1]
+  [! i 0]
+  [W [&& ok [< i alen]] [D
+    [? [!= [@ a i] [@ b i]] [! ok 0] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ ok]
+]]
+
+[§ string_label_num [[$ ctx] [$ val]] [D
+  [! vals [@@$ ctx 11]]
+  [! count [@@ ctx 8]]
+  [! i 0]
+  [! found -1]
+  [W [&& [== found -1] [< i count]] [D
+    [! existing [@@$ vals i]]
+    [? [streq_ptr val existing] [! found i] [D]]
+    [! i [+ i 1]]
+  ]]
+  [? [!= found -1] [^ found] [D]]
+  [@@$! vals count val]
+  [@@! ctx 8 [+ count 1]]
+  [^ count]
+]]
+
+[§ [$ fopen_mode_value] [[$ tokens] [$ src] mode_tok] [D
+  [! st [@@ tokens [+ [* mode_tok 3] 1]]]
+  [! c [@ src st]]
+  [? [== c 114] [^ "rb"] [? [== c 119] [^ "wb"] [^ "ab"]]]
+]]
+
+// static_type: mirrors aic_codegen.py's Codegen._static_type for the cases
+// codegen itself needs while printing: string literals, variable reads through
+// the active scope type table (ctx slot 12), libc ops that return STR (H/N/R),
+// user-function declared return type (ctx slot 9), and ternary value forms via
+// their then-branch.
+[§ static_type [[$ tokens] [$ match] [$ src] p [$ ctx]] [D
+  [! tag [@@ tokens [* p 3]]]
+  [? [== tag 4] [^ 1] [D]]
+  [? [== tag 3] [D
+      [! ast [@@ tokens [+ [* p 3] 1]]]
+      [! aln [@@ tokens [+ [* p 3] 2]]]
+      [? [is_numeric_atom src ast aln] [^ 0] [D]]
+      [! decls [@@$ ctx 2]]
+      [! dcount [@@ ctx 3]]
+      [! idx [decl_index src decls dcount ast aln]]
+      [? [< idx 0] [^ 0] [D]]
+      [! types [@@$ ctx 12]]
+      [^ [@@ types idx]]
+    ] [D]]
+  [! op_tok [+ p 1]]
+  [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+  [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+  [! opcode -2]
+  [? [== hln 1] [! opcode [classify_op1 [@ src hst]]] [D]]
+  [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
+  [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+  [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+  [? [|| [== opcode 13] [|| [== opcode 15] [== opcode 19]]] [^ 1] [D]]
+  [? [== opcode 3] [D
+      [! cond [+ op_tok 1]]
+      [! ce [next_child_end tokens match cond]]
+      [! then_tok [+ ce 1]]
+      [^ [static_type tokens match src then_tok ctx]]
+    ] [D]]
+  [! found [resolve_func tokens src hst hln ctx]]
+  [? [!= found -1] [D
+      [! fnret [@@$ ctx 9]]
+      [^ [@@ fnret found]]
+    ] [D]]
+  [^ 0]
+]]
+
+// emit_libc_op: 'H L N V O Z R K X' (opcodes 13-21) used in an expression
+// position. The statement dispatcher can delegate bare libc forms here too,
+// exactly like aic_codegen.py's compile_stmt does.
+[§ emit_libc_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [? [== code 13] [D
+      [@@! ctx 14 1]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    leaq    1(%rax), %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    call    aic_calloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+    ] [D]]
+  [? [== code 14] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_strlen\n"]
+    ] [D]]
+  [? [== code 15] [D
+      [@@! ctx 14 1]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [K h "    movq    $24, %rdi\n"]
+      [K h "    call    aic_malloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    leaq    fmt_d(%rip), %rsi\n"]
+      [K h "    movq    %r12, %rdx\n"]
+      [K h "    xorl    %eax, %eax\n"]
+      [K h "    call    aic_sprintf\n"]
+      [K h "    movq    %r13, %rax\n"]
+    ] [D]]
+  [? [== code 16] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    xorl    %esi, %esi\n"]
+      [K h "    movq    $10, %rdx\n"]
+      [K h "    call    aic_strtol\n"]
+    ] [D]]
+  [? [== code 17] [D
+      [@@! ctx 14 1]
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [! mval [fopen_mode_value tokens src arg2]]
+      [! nlbl [string_label_num ctx mval]] [! nlbltxt [N nlbl]]
+      [K h "    leaq    aicstr_"] [K h nlbltxt] [K h "(%rip), %rsi\n"]
+      [K h "    call    aic_fopen\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lopenok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lopenok"] [K h lbltxt] [K h ":\n"]
+    ] [D]]
+  [? [== code 18] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    call    aic_ftell\n"]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    movq    $0, %rsi\n"]
+      [K h "    movq    $2, %rdx\n"]
+      [K h "    call    aic_fseek\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    call    aic_ftell\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    movq    %r13, %rsi\n"]
+      [K h "    movq    $0, %rdx\n"]
+      [K h "    call    aic_fseek\n"]
+      [K h "    movq    %r14, %rax\n"]
+    ] [D]]
+  [? [== code 19] [D
+      [@@! ctx 14 1]
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [emit_expr tokens match src arg2 ctx]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    leaq    1(%r13), %rdi\n"]
+      [K h "    call    aic_malloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r14, %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    movq    %r13, %rdx\n"]
+      [K h "    movq    %r12, %rcx\n"]
+      [K h "    call    aic_fread\n"]
+      [K h "    movb    $0, (%r14,%rax)\n"]
+      [K h "    movq    %r14, %rax\n"]
+    ] [D]]
+  [? [== code 20] [D
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [emit_expr tokens match src arg2 ctx]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    call    aic_strlen\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    movq    %r14, %rdx\n"]
+      [K h "    movq    %r12, %rcx\n"]
+      [K h "    call    aic_fwrite\n"]
+    ] [D]]
+  [? [== code 21] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_fclose\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+// emit_print: '[. expr ...]' - zero or more args, each compiled then
+// printed through the format string selected by static_type and position.
+[§ emit_print [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! e [@@ match s]]
+  [! first [+ op_tok 1]]
+  [? [== first e] [D
+      [K h "    leaq    nl_only(%rip), %rdi\n"]
+      [K h "    xorl    %eax, %eax\n"]
+      [K h "    call    aic_printf\n"]
+    ] [D
+      [! p first]
+      [W [< p e] [D
+        [! ne [+ [next_child_end tokens match p] 1]]
+        [! is_last [== ne e]]
+        [emit_expr tokens match src p ctx]
+        [! is_str [static_type tokens match src p ctx]]
+        [? is_str
+          [? is_last [K h "    leaq    fmt_s_nl(%rip), %rdi\n"] [K h "    leaq    fmt_s_sp(%rip), %rdi\n"]]
+          [? is_last [K h "    leaq    fmt_nl(%rip), %rdi\n"] [K h "    leaq    fmt_sp(%rip), %rdi\n"]]]
+        [K h "    movq    %rax, %rsi\n"]
+        [K h "    xorl    %eax, %eax\n"]
+        [K h "    call    aic_printf\n"]
+        [! p ne]
+      ]]
+    ]]
+  [^ 0]
+]]
+
+// emit_shortcircuit: '&&'/'||', short-circuit exactly like C/JS - the
+// right operand's instructions only run when the left side didn't already
+// decide the result. is_and picks between the two mirror-image jump
+// senses (je vs jne) and fallback values (0 vs 1), same as
+// aic_codegen.py's single shared code path keyed on 'op == "&&"'.
+[§ emit_shortcircuit [[$ tokens] [$ match] [$ src] s [$ ctx] is_and] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! left [+ op_tok 1]]
+  [! lce [next_child_end tokens match left]]
+  [! right [+ lce 1]]
+  [! lbl1 [new_label_num ctx]]
+  [! lbl1txt [N lbl1]]
+  [! lbl2 [new_label_num ctx]]
+  [! lbl2txt [N lbl2]]
+  [! fallback [? is_and 0 1]]
+  [! fbtxt [N fallback]]
+  [emit_expr tokens match src left ctx]
+  [K h "    testq   %rax, %rax\n"]
+  [? is_and
+    [D [K h "    je      .Lscshort"] [K h lbl1txt] [K h "\n"]]
+    [D [K h "    jne      .Lscshort"] [K h lbl1txt] [K h "\n"]]]
+  [emit_expr tokens match src right ctx]
+  [K h "    testq   %rax, %rax\n"]
+  [K h "    setne   %al\n"]
+  [K h "    movzbq  %al, %rax\n"]
+  [K h "    jmp     .Lscend"] [K h lbl2txt] [K h "\n"]
+  [K h ".Lscshort"] [K h lbl1txt] [K h ":\n"]
+  [K h "    movq    $"] [K h fbtxt] [K h ", %rax\n"]
+  [K h ".Lscend"] [K h lbl2txt] [K h ":\n"]
+  [^ 0]
+]]
+
+// emit_ternary: '?' used as a value ([? cond then else]) - condition,
+// conditional jump to the else branch, then-branch, unconditional jump to
+// end, else-branch, end label. Type-matching between the two branches is
+// Analyzer.analyze's job (check_reads' _static_type comparison), not
+// compile_expr's - so, like aic_codegen.py's own compile_expr, this emits
+// unconditionally and trusts analysis already validated it.
+[§ emit_ternary [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! cond [+ op_tok 1]]
+  [! ce [next_child_end tokens match cond]]
+  [! then_tok [+ ce 1]]
+  [! te [next_child_end tokens match then_tok]]
+  [! else_tok [+ te 1]]
+  [! lbl1 [new_label_num ctx]]
+  [! lbl1txt [N lbl1]]
+  [! lbl2 [new_label_num ctx]]
+  [! lbl2txt [N lbl2]]
+  [emit_expr tokens match src cond ctx]
+  [K h "    testq   %rax, %rax\n"]
+  [K h "    je      .Lternelse"] [K h lbl1txt] [K h "\n"]
+  [emit_expr tokens match src then_tok ctx]
+  [K h "    jmp     .Lternend"] [K h lbl2txt] [K h "\n"]
+  [K h ".Lternelse"] [K h lbl1txt] [K h ":\n"]
+  [emit_expr tokens match src else_tok ctx]
+  [K h ".Lternend"] [K h lbl2txt] [K h ":\n"]
+  [^ 0]
+]]
+
+[§ emit_binop_tail [[$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [? [== code 1] [K h "    addq    %rbx, %rax\n"] [D]]
+  [? [== code 2] [K h "    subq    %rbx, %rax\n"] [D]]
+  [? [== code 3] [K h "    imulq   %rbx, %rax\n"] [D]]
+  [? [|| [== code 4] [== code 5]] [D
+      [@@! ctx 13 1]
+      [! lbl [new_label_num ctx]]
+      [! lbltxt [N lbl]]
+      [K h "    testq   %rbx, %rbx\n"]
+      [K h "    jne     .Ldivok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Ldivzero\n"]
+      [K h ".Ldivok"] [K h lbltxt] [K h ":\n"]
+      [K h "    cqto\n"]
+      [K h "    idivq   %rbx\n"]
+      [? [== code 5] [K h "    movq    %rdx, %rax\n"] [D]]
+    ] [D]]
+  [? [== code 6] [K h "    andq    %rbx, %rax\n"] [D]]
+  [? [== code 7] [K h "    orq     %rbx, %rax\n"] [D]]
+  [? [== code 14] [K h "    xorq    %rbx, %rax\n"] [D]]
+  [? [== code 15] [D [K h "    movq    %rbx, %rcx\n"] [K h "    shlq    %cl, %rax\n"]] [D]]
+  [? [== code 16] [D [K h "    movq    %rbx, %rcx\n"] [K h "    sarq    %cl, %rax\n"]] [D]]
+  [? [== code 8] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setl    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 9] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setg    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 10] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    sete    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 11] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setne    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 12] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setle    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [== code 13] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setge    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
+  [? [|| [< code 1] [> code 16]] [. "CodegenError: emit_expr only supports arithmetic/comparison binary ops so far - got an unrecognized/unsupported operator"] [D]]
+  [^ 0]
+]]
+
+[§ emit_expr [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! tag [@@ tokens [* s 3]]]
+  [? [== tag 4] [D
+      [! st [@@ tokens [+ [* s 3] 1]]]
+      [! ln [@@ tokens [+ [* s 3] 2]]]
+      [! sval [slice_str src st ln]]
+      [! n [string_label_num ctx sval]]
+      [! ntxt [N n]]
+      [K h "    leaq    aicstr_"] [K h ntxt] [K h "(%rip), %rax\n"]
+    ] [? [== tag 3] [D
+      [! ast [@@ tokens [+ [* s 3] 1]]]
+      [! aln [@@ tokens [+ [* s 3] 2]]]
+      [? [is_numeric_atom src ast aln] [D
+          [! v [V [slice_str src ast aln]]]
+          [! vtxt [N v]]
+          [K h "    movq    $"] [K h vtxt] [K h ", %rax\n"]
+        ] [D
+          [! decls [@@$ ctx 2]]
+          [! dcount [@@ ctx 3]]
+          [! idx [decl_index src decls dcount ast aln]]
+          [! off [* -8 [+ idx 1]]]
+          [! offtxt [N off]]
+          [K h "    movq    "] [K h offtxt] [K h "(%rbp), %rax\n"]
+        ]]
+    ] [D
+      [! op_tok [+ s 1]]
+      [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+      [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+      [! b0 [@ src hst]]
+      [! b1 [? [> hln 1] [@ src [+ hst 1]] 0]]
+      [! is_sc_and [&& [== hln 2] [&& [== b0 38] [== b1 38]]]]
+      [! is_sc_or [&& [== hln 2] [&& [== b0 124] [== b1 124]]]]
+      [! opcode -2]
+      [? [== hln 1] [! opcode [classify_op1 b0]] [D]]
+      [? [== hln 2] [! opcode [classify_op2 b0 b1]] [D]]
+      [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+      [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+      [? [== opcode 3]
+        [emit_ternary tokens match src s ctx]
+        [? is_sc_and
+          [emit_shortcircuit tokens match src s ctx 1]
+          [? is_sc_or
+            [emit_shortcircuit tokens match src s ctx 0]
+            [? [|| [== opcode 7] [== opcode 8]]
+              [emit_byte_op tokens match src s ctx opcode]
+              [? [|| [|| [== opcode 9] [== opcode 10]] [|| [== opcode 11] [== opcode 12]]]
+                [emit_word_op tokens match src s ctx opcode]
+                [? [&& [>= opcode 13] [<= opcode 21]]
+                  [emit_libc_op tokens match src s ctx opcode]
+                  [D
+                  [! bcode [binop_classify src hst hln]]
+                  [? [!= bcode -1]
+                    [D
+                      [! left [+ op_tok 1]]
+                      [! lce [next_child_end tokens match left]]
+                      [! right [+ lce 1]]
+                      [emit_expr tokens match src left ctx]
+                      [K h "    pushq   %rax\n"]
+                      [emit_expr tokens match src right ctx]
+                      [K h "    movq    %rax, %rbx\n"]
+                      [K h "    popq    %rax\n"]
+                      [emit_binop_tail ctx bcode]
+                    ]
+              [D
+                [! found [resolve_func tokens src hst hln ctx]]
+                [? [!= found -1]
+                  [emit_call tokens match src s ctx found]
+                  [. "CodegenError: emit_expr - unresolved symbol in expression position"]]
+              ]]
+            ]]]]]]]
+    ]]]
+]]
+
+// emit_assign: '[! name expr]' - compile the RHS, store %rax to name's
+// stack slot. Mirrors emit_expr's own atom-var-read branch exactly
+// (decl_index -> offset -> N -> text), just writing instead of reading.
+[§ emit_assign [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! name_tok [+ op_tok 1]]
+  [! expr_tok [+ name_tok 1]]
+  [! nst [@@ tokens [+ [* name_tok 3] 1]]]
+  [! nln [@@ tokens [+ [* name_tok 3] 2]]]
+  [! decls [@@$ ctx 2]]
+  [! dcount [@@ ctx 3]]
+  [! idx [decl_index src decls dcount nst nln]]
+  [! off [* -8 [+ idx 1]]]
+  [! offtxt [N off]]
+  [emit_expr tokens match src expr_tok ctx]
+  [K h "    movq    %rax, "] [K h offtxt] [K h "(%rbp)\n"]
+  [^ 0]
+]]
+
+// emit_return: '[^ expr]' - compile expr, jump to the active epilogue
+// label (ctx slot 7, a STR pointer set by the driver/caller - a real
+// per-function frame with its own genuine epilogue label is Stage 9).
+[§ emit_return [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! expr_tok [+ op_tok 1]]
+  [emit_expr tokens match src expr_tok ctx]
+  [! curfi [@@ ctx 10]]
+  [? [>= curfi 0] [D
+      [! funcs [@@$ ctx 4]]
+      [! name_tok [@@ funcs [+ [* curfi 4] 1]]]
+      [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+      [K h "    jmp     .Lret_"]
+      [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+      [K h "\n"]
+    ] [D
+      [K h "    jmp     "] [K h [@@$ ctx 7]] [K h "\n"]
+    ]]
+  [^ 0]
+]]
+
+// emit_do: '[D stmt ...]' - purely sequential, no codegen of its own.
+[§ emit_do [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! op_tok [+ s 1]]
+  [! e [@@ match s]]
+  [! p [+ op_tok 1]]
+  [W [< p e] [D
+    [emit_stmt tokens match src p ctx]
+    [! p [+ [next_child_end tokens match p] 1]]
+  ]]
+  [^ 0]
+]]
+
+// emit_while: '[W cond stmt ...]'. Both labels allocated before the
+// condition compiles, same "allocate the whole pair up front" order
+// aic_codegen.py's own 'top_l, end_l = new_label(...), new_label(...)'
+// uses - top_l gets the lower number.
+[§ emit_while [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! cond [+ op_tok 1]]
+  [! ce [next_child_end tokens match cond]]
+  [! e [@@ match s]]
+  [! lbl1 [new_label_num ctx]] [! lbl1txt [N lbl1]]
+  [! lbl2 [new_label_num ctx]] [! lbl2txt [N lbl2]]
+  [K h ".Lwtop"] [K h lbl1txt] [K h ":\n"]
+  [emit_expr tokens match src cond ctx]
+  [K h "    testq   %rax, %rax\n"]
+  [K h "    je      .Lwend"] [K h lbl2txt] [K h "\n"]
+  [! p [+ ce 1]]
+  [W [< p e] [D
+    [emit_stmt tokens match src p ctx]
+    [! p [+ [next_child_end tokens match p] 1]]
+  ]]
+  [K h "    jmp     .Lwtop"] [K h lbl1txt] [K h "\n"]
+  [K h ".Lwend"] [K h lbl2txt] [K h ":\n"]
+  [^ 0]
+]]
+
+// emit_if: '[? cond then [else]]' used as a STATEMENT (as opposed to
+// emit_ternary, the same symbol used as a VALUE) - else branch is
+// optional, matching aic_codegen.py's 'if len(node) > 3'.
+[§ emit_if [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! cond [+ op_tok 1]]
+  [! ce [next_child_end tokens match cond]]
+  [! then_tok [+ ce 1]]
+  [! te [next_child_end tokens match then_tok]]
+  [! e [@@ match s]]
+  [! else_tok [+ te 1]]
+  [! lbl1 [new_label_num ctx]] [! lbl1txt [N lbl1]]
+  [! lbl2 [new_label_num ctx]] [! lbl2txt [N lbl2]]
+  [emit_expr tokens match src cond ctx]
+  [K h "    testq   %rax, %rax\n"]
+  [K h "    je      .Lelse"] [K h lbl1txt] [K h "\n"]
+  [emit_stmt tokens match src then_tok ctx]
+  [K h "    jmp     .Lendif"] [K h lbl2txt] [K h "\n"]
+  [K h ".Lelse"] [K h lbl1txt] [K h ":\n"]
+  [? [< else_tok e] [emit_stmt tokens match src else_tok ctx] [D]]
+  [K h ".Lendif"] [K h lbl2txt] [K h ":\n"]
+  [^ 0]
+]]
+
+// emit_stmt: top-level statement dispatch, off the same classify_op1..4
+// codes emit_expr's dual-role '?' already uses. A non-list node (tag !=
+// 1) is a no-op here, mirroring aic_codegen.py's own compile_stmt guard
+// ('if not isinstance(node, list) ... return'). Byte/word ops and
+// function calls delegate straight to emit_byte_op/emit_word_op/
+// emit_call - not emit_expr's full dispatch - specifically to AVOID
+// emit_expr's binop_classify fallback: a bare '[+ 1 2]' at statement
+// position must be rejected, never silently compiled as if it were a
+// value nobody uses, matching compile_stmt's own final 'else: raise'.
+[§ emit_stmt [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! tag [@@ tokens [* s 3]]]
+  [? [!= tag 1] [D] [D
+    [! op_tok [+ s 1]]
+    [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+    [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+    [! opcode -2]
+    [? [== hln 1] [! opcode [classify_op1 [@ src hst]]] [D]]
+    [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
+    [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+    [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+    [? [== opcode 2] [emit_assign tokens match src s ctx]
+      [? [== opcode 6] [emit_return tokens match src s ctx]
+        [? [== opcode 3] [emit_if tokens match src s ctx]
+          [? [== opcode 4] [emit_while tokens match src s ctx]
+            [? [== opcode 5] [emit_do tokens match src s ctx]
+              [? [== opcode 1] [emit_print tokens match src s ctx]
+                [? [&& [>= opcode 7] [<= opcode 21]]
+                  [emit_expr tokens match src s ctx]
+                  [D
+                    [! found [resolve_func tokens src hst hln ctx]]
+                    [? [!= found -1]
+                      [emit_call tokens match src s ctx found]
+                      [. "CodegenError: emit_stmt - unsupported statement head"]]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    ]
+  ]]
+  [^ 0]
+]]
+
+// --- stage 9a: frame-emission primitives -----------------------------------
+// Small reusable pieces for the full assembly builder: frame-size rounding,
+// stack-slot zero-initialization, and the fixed main wrapper prologue/epilogue.
+// The body emission still comes from Stage 8's emit_stmt; wiring these into a
+// whole-program driver is the next Stage 9 slice.
+[§ frame_size_for [slot_count] [D
+  [! bytes [* slot_count 8]]
+  [! rounded [* [/ [+ bytes 15] 16] 16]]
+  [? [< rounded 16] [! rounded 16] [D]]
+  [^ rounded]
+]]
+
+[§ emit_zero_slot [h idx] [D
+  [! off [* -8 [+ idx 1]]]
+  [! offtxt [N off]]
+  [K h "    movq    $0, "] [K h offtxt] [K h "(%rbp)\n"]
+  [^ 0]
+]]
+
+[§ emit_zero_slots [h slot_count] [D
+  [! i 0]
+  [W [< i slot_count] [D
+    [emit_zero_slot h i]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_zero_slots_from [h start slot_count] [D
+  [! i start]
+  [W [< i slot_count] [D
+    [emit_zero_slot h i]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_main_prologue [h frame_size] [D
+  [! fstxt [N frame_size]]
+  [K h "    .globl aic_main\n"]
+  [K h "aic_main:\n"]
+  [K h "    pushq   %rbp\n"]
+  [K h "    movq    %rsp, %rbp\n"]
+  [K h "    subq    $"] [K h fstxt] [K h ", %rsp\n"]
+  [^ 0]
+]]
+
+[§ emit_main_epilogue [h] [D
+  [K h "    movq    $0, %rax\n"]
+  [K h "    leave\n"]
+  [K h "    ret\n"]
+  [^ 0]
+]]
+
+[§ emit_function_prologue [[$ tokens] [$ src] [$ funcs] fi h frame_size] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+  [! fstxt [N frame_size]]
+  [K h "aicfn_"]
+  [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+  [K h ":\n"]
+  [K h "    pushq   %rbp\n"]
+  [K h "    movq    %rsp, %rbp\n"]
+  [K h "    subq    $"] [K h fstxt] [K h ", %rsp\n"]
+  [^ 0]
+]]
+
+[§ emit_arg_copies [h pcount] [D
+  [! i 0]
+  [W [< i pcount] [D
+    [! off [* -8 [+ i 1]]]
+    [! offtxt [N off]]
+    [K h "    movq    "] [K h [argreg_name i]] [K h ", "] [K h offtxt] [K h "(%rbp)\n"]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_function_epilogue [[$ tokens] [$ src] [$ funcs] fi h] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+  [K h "    movq    $0, %rax\n"]
+  [K h ".Lret_"]
+  [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+  [K h ":\n"]
+  [K h "    leave\n"]
+  [K h "    ret\n"]
+  [^ 0]
+]]
+
+[§ [$ dq] [] [D [! b [H 1]] [@! b 0 34] [^ b]]]
+
+[§ emit_rodata_prefix [h] [D
+  [! q [dq]]
+  [K h "    .section .rodata\n"]
+  [K h "fmt_nl:\n"]
+  [K h "    .string "] [K h q] [K h "%ld\\n"] [K h q] [K h "\n"]
+  [K h "fmt_sp:\n"]
+  [K h "    .string "] [K h q] [K h "%ld "] [K h q] [K h "\n"]
+  [K h "fmt_s_nl:\n"]
+  [K h "    .string "] [K h q] [K h "%s\\n"] [K h q] [K h "\n"]
+  [K h "fmt_s_sp:\n"]
+  [K h "    .string "] [K h q] [K h "%s "] [K h q] [K h "\n"]
+  [K h "fmt_d:\n"]
+  [K h "    .string "] [K h q] [K h "%ld"] [K h q] [K h "\n"]
+  [K h "nl_only:\n"]
+  [K h "    .string "] [K h q] [K h "\\n"] [K h q] [K h "\n"]
+  [^ 0]
+]]
+
+[§ emit_str_rodata [[$ str_values] count h] [D
+  [! q [dq]]
+  [! i 0]
+  [W [< i count] [D
+    [! val [@@$ str_values i]]
+    [! itxt [N i]]
+    [K h "aicstr_"] [K h itxt] [K h ":\n"]
+    [K h "    .string "] [K h q]
+    [K h val]
+    [K h q] [K h "\n"]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_rodata_divzero [h] [D
+  [! q [dq]]
+  [K h "divzero_msg:\n"]
+  [K h "    .string "] [K h q] [K h "AIC Runtime Error: Division by zero\\n"] [K h q] [K h "\n"]
+  [K h "divzero_msg_end:\n"]
+  [K h "    .equ divzero_len, divzero_msg_end - divzero_msg - 1\n"]
+  [^ 0]
+]]
+
+[§ emit_rodata_runtime [h] [D
+  [! q [dq]]
+  [K h "runtimeerr_msg:\n"]
+  [K h "    .string "] [K h q] [K h "AIC Runtime Error: a file or memory operation failed (open/allocate)\\n"] [K h q] [K h "\n"]
+  [K h "runtimeerr_msg_end:\n"]
+  [K h "    .equ runtimeerr_len, runtimeerr_msg_end - runtimeerr_msg - 1\n"]
+  [^ 0]
+]]
+
+[§ emit_divzero_handler [h] [D
+  [K h "\n\n.Ldivzero:\n"]
+  [K h "    leaq    divzero_msg(%rip), %rsi\n"]
+  [K h "    movq    %rsi, %rdi\n"]
+  [K h "    call    aic_runtime_error\n"]
+  [^ 0]
+]]
+
+[§ emit_runtime_handler [h] [D
+  [K h "\n\n.Lruntimeerror:\n"]
+  [K h "    leaq    runtimeerr_msg(%rip), %rsi\n"]
+  [K h "    movq    %rsi, %rdi\n"]
+  [K h "    call    aic_runtime_error\n"]
+  [^ 0]
+]]
+
+[§ copy_file_to [[$ path] h] [D
+  [! ih [O path "r"]]
+  [! n [Z ih]]
+  [! buf [R ih n]]
+  [K h buf]
+  [X ih]
+  [^ 0]
+]]
+
+[§ emit_note_section [h] [D
+  [^ 0]
+]]
+
+[§ infer_stmt_types [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! tag [@@ tokens [* s 3]]]
+  [? [!= tag 1] [D] [D
+    [! op_tok [+ s 1]]
+    [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+    [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+    [! opcode -2]
+    [? [== hln 1] [! opcode [classify_op1 [@ src hst]]] [D]]
+    [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
+    [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+    [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+    [? [== opcode 2] [D
+        [! name_tok [+ op_tok 1]]
+        [! expr_tok [+ name_tok 1]]
+        [! nst [@@ tokens [+ [* name_tok 3] 1]]]
+        [! nln [@@ tokens [+ [* name_tok 3] 2]]]
+        [! decls [@@$ ctx 2]]
+        [! dcount [@@ ctx 3]]
+        [! idx [decl_index src decls dcount nst nln]]
+        [! t [static_type tokens match src expr_tok ctx]]
+        [! types [@@$ ctx 12]]
+        [@@! types idx t]
+      ] [? [== opcode 3] [D
+        [! cond [+ op_tok 1]]
+        [! ce [next_child_end tokens match cond]]
+        [! then_tok [+ ce 1]]
+        [! te [next_child_end tokens match then_tok]]
+        [! e [@@ match s]]
+        [! else_tok [+ te 1]]
+        [infer_stmt_types tokens match src then_tok ctx]
+        [? [< else_tok e] [infer_stmt_types tokens match src else_tok ctx] [D]]
+      ] [? [== opcode 4] [D
+        [! cond [+ op_tok 1]]
+        [! ce [next_child_end tokens match cond]]
+        [! e [@@ match s]]
+        [! p [+ ce 1]]
+        [W [< p e] [D
+          [infer_stmt_types tokens match src p ctx]
+          [! p [+ [next_child_end tokens match p] 1]]
+        ]]
+      ] [? [== opcode 5] [D
+        [! e [@@ match s]]
+        [! p [+ op_tok 1]]
+        [W [< p e] [D
+          [infer_stmt_types tokens match src p ctx]
+          [! p [+ [next_child_end tokens match p] 1]]
+        ]]
+      ] [D]]]]]
+  ]]
+  [^ 0]
+]]
+
+
+[! h [O "code.aic" "r"]]
+[! n [Z h]]
+[! src [R h n]]
+[! tokens [H [* [+ n 1] 24]]]
+[! i 0]
+[! tok_count 0]
+[! in_comment 0]
+[! in_string 0]
+[! string_start 0]
+[! atom_start 0]
+[! c 0]
+[W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
+[X h]
+
+[! stack [H [* tok_count 8]]]
+[! match [H [* tok_count 8]]]
+[! sp 0]
+[! err 0]
+[! pairs 0]
+[! k 0]
+[! tag 0]
+[! j 0]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [@@! stack sp j] [! sp [+ sp 1]]] [? [== tag 2] [? [== sp 0] [? [== err 0] [D [. "ParseError: unexpected ']' at byte" [@@ tokens [+ [* j 3] 1]]] [! err 1]] [D]] [D [! sp [- sp 1]] [! k [@@ stack sp]] [@@! match k j] [@@! match j k] [! pairs [+ pairs 1]]]] [D]]] [! j [+ j 1]]]
+[? [&& [== err 0] [> sp 0]] [D [! k [@@ stack [- sp 1]]] [. "ParseError: unclosed '[' at byte" [@@ tokens [+ [* k 3] 1]]] [! err 1]] [D]]
+
+[! funcs [H [* [+ tok_count 1] 32]]]
+[! mains [H [* [+ tok_count 1] 16]]]
+[! func_count 0]
+[! main_count 0]
+[! form_end 0]
+[! name_tok 0]
+[! params_open_tok 0]
+[! j 0]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [! form_end [@@ match j]] [! name_tok [+ j 2]] [? [is_section tokens src [+ j 1]] [D [? [== [@@ tokens [* name_tok 3]] 1] [! params_open_tok [+ [@@ match name_tok] 1]] [! params_open_tok [+ name_tok 1]]] [@@! funcs [* func_count 4] j] [@@! funcs [+ [* func_count 4] 1] name_tok] [@@! funcs [+ [* func_count 4] 2] params_open_tok] [@@! funcs [+ [* func_count 4] 3] form_end] [! func_count [+ func_count 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] form_end] [! main_count [+ main_count 1]]]] [! j [+ form_end 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] j] [! main_count [+ main_count 1]] [! j [+ j 1]]]]]
+
+// --- stage 4: per-function param parsing + declared-variable collection --
+// For each function record from stage 3, parse its parameter list (each
+// entry is either a bare atom -> INT, or '[$ name]' -> STR, mirroring
+// _parse_name_decl in aic_codegen.py) and separately scan the whole body
+// for every '[' '!' <atom> pattern at ANY nesting depth (a linear scan
+// over the token range works for this - unlike stage 3, we don't need to
+// skip nested forms, we WANT to see inside them), mirroring
+// collect_declarations. Each function gets its own two heap buffers
+// (params, declared-names), sized generously off its own token span so no
+// cross-function bound has to be computed up front.
+[! fn_param_buf [H [* [+ func_count 1] 8]]]
+[! fn_param_count [H [* [+ func_count 1] 8]]]
+[! fn_decl_buf [H [* [+ func_count 1] 8]]]
+[! fn_decl_count [H [* [+ func_count 1] 8]]]
+[! fn_type_buf [H [* [+ func_count 1] 8]]]
+[! fn_ret_is_str [H [* [+ func_count 1] 8]]]
+[! fi 0]
+[! po 0]
+[! pc 0]
+[! p 0]
+[! pn 0]
+[! ptype 0]
+[! pnext 0]
+[! span 0]
+[! pcnt 0]
+[! dcnt 0]
+[! bstart 0]
+[! b 0]
+[! fend 0]
+[! qi 0]
+[W [< fi func_count] [D
+  [! po [@@ funcs [+ [* fi 4] 2]]]
+  [! fend [@@ funcs [+ [* fi 4] 3]]]
+  [! pc [@@ match po]]
+  [! span [+ [- fend [@@ funcs [* fi 4]]] 1]]
+  [! pbuf [H [* span 16]]]
+  [! dbuf [H [* span 16]]]
+  [! pcnt 0]
+  [! dcnt 0]
+  [! p [+ po 1]]
+  [W [< p pc] [D
+    [? [== [@@ tokens [* p 3]] 1]
+      [D [! pn [+ p 2]] [! ptype 1] [! pnext [+ [@@ match p] 1]]]
+      [D [! pn p] [! ptype 0] [! pnext [+ p 1]]]]
+    [@@! pbuf [* pcnt 2] pn]
+    [@@! pbuf [+ [* pcnt 2] 1] ptype]
+    [! pcnt [+ pcnt 1]]
+    [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* pn 3] 1]] [@@ tokens [+ [* pn 3] 2]]]]
+    [! p pnext]
+  ]]
+  [! bstart [+ pc 1]]
+  [! b bstart]
+  [W [< b fend] [D
+    [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] fend] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
+      [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
+      [D]]
+    [! b [+ b 1]]
+  ]]
+  [sort_decls src dbuf pcnt dcnt]
+  [! tbuf [H [* [+ dcnt 1] 8]]]
+  [! qi 0]
+  [W [< qi pcnt] [D
+    [@@! tbuf qi [@@ pbuf [+ [* qi 2] 1]]]
+    [! qi [+ qi 1]]
+  ]]
+  [@@$! fn_param_buf fi pbuf]
+  [@@! fn_param_count fi pcnt]
+  [@@$! fn_decl_buf fi dbuf]
+  [@@! fn_decl_count fi dcnt]
+  [@@$! fn_type_buf fi tbuf]
+  [! nt [@@ funcs [+ [* fi 4] 1]]]
+  [@@! fn_ret_is_str fi [? [== [@@ tokens [* nt 3]] 1] 1 0]]
+  [! fi [+ fi 1]]
+]]
+
+// main's declared set: same '!' scan, over every token spanned by the
+// 'mains' ranges from stage 3 (which together are exactly main's tokens,
+// excluding all function bodies).
+[! main_decl [H [* [+ tok_count 1] 16]]]
+[! main_decl_count 0]
+[! mi 0]
+[! mstart 0]
+[! mend 0]
+[W [< mi main_count] [D
+  [! mstart [@@ mains [* mi 2]]]
+  [! mend [@@ mains [+ [* mi 2] 1]]]
+  [! b mstart]
+  [W [<= b mend] [D
+    [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] tok_count] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
+      [! main_decl_count [decl_add src main_decl main_decl_count [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
+      [D]]
+    [! b [+ b 1]]
+  ]]
+  [! mi [+ mi 1]]
+]]
+[sort_decls src main_decl 0 main_decl_count]
+
+[. "FUNC_COUNT" func_count]
+[. "MAIN_COUNT" main_count]
+[! fi 0]
+[W [< fi func_count] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 3]
+    [! fname [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+    [! fname "(complex-name)"]]
+  [. "FUNC" fi fname "params=" [@@ fn_param_count fi] "declared=" [@@ fn_decl_count fi]]
+  [! fi [+ fi 1]]
+]]
+[. "MAIN_DECLARED" main_decl_count]
+
+// stage 5 verification: classify every main-level statement and print a
+// histogram by code. STMT_UNKNOWN(-1) must be 0 for a real program - any
+// nonzero there is either a malformed statement or a genuinely unhandled
+// symbol, both worth knowing about before codegen is attempted.
+[D [! hist [H [* 25 8]]] [! mi 0] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]] [! mi [+ mi 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]]]
+
+// --- stage 6a driver: full-depth statement histogram ----------------------
+// Same buckets as stage 5's, plus index 0 for "structurally unrecognized /
+// could be a call, classify_op_only can't tell" (see comment above that
+// function) - stage 5's own top-level counts above are unaffected by this.
+[! hist2 [H [* 25 8]]]
+[! mi 0]
+[W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [recurse_stmt tokens match src mstart mend hist2] [! mi [+ mi 1]]]]
+[! fi 0]
+[W [< fi func_count] [D
+  [! po2 [@@ funcs [+ [* fi 4] 2]]]
+  [! fend2 [@@ funcs [+ [* fi 4] 3]]]
+  [! pc2 [@@ match po2]]
+  [! b2 [+ pc2 1]]
+  [W [< b2 fend2] [D [! ce2 [next_child_end tokens match b2]] [recurse_stmt tokens match src b2 ce2 hist2] [! b2 [+ ce2 1]]]]
+  [! fi [+ fi 1]]
+]]
+[. "=== stage 6a: full-depth histogram (main + every function body, all nesting) ==="]
+[. "ALL_CALL_OR_UNKNOWN(no-fn-check)=" [@@ hist2 0]]
+[. "ALL_UNKNOWN(-1)=" [@@ hist2 1]]
+[. "ALL_DOT(.)=" [@@ hist2 3]]
+[. "ALL_ASSIGN(!)=" [@@ hist2 4]]
+[. "ALL_IF(?)=" [@@ hist2 5]]
+[. "ALL_WHILE(W)=" [@@ hist2 6]]
+[. "ALL_DO(D)=" [@@ hist2 7]]
+[. "ALL_RETURN(^)=" [@@ hist2 8]]
+[. "ALL_BYTEOP(@)=" [@@ hist2 9]]
+[. "ALL_BYTESET(@!)=" [@@ hist2 10]]
+[. "ALL_WORDOP(@@)=" [@@ hist2 11]]
+[. "ALL_WORDSET(@@!)=" [@@ hist2 12]]
+[. "ALL_WORDPTR(@@$)=" [@@ hist2 13]]
+[. "ALL_WORDPTRSET(@@$!)=" [@@ hist2 14]]
+
+// --- stage 6b driver: expression read validation --------------------------
+// For every top-level statement (main's, and each function's own body,
+// each checked ONLY against that function's own declared set - never
+// cross-contaminated, matching "no implicit access to caller/global
+// variables") collect every variable read and confirm it resolves. A
+// nonzero UNRESOLVED count here means compiler.aic itself would fail
+// aic_codegen.py's check_reads - the exact self-consistency check a
+// self-hosting compiler needs to be able to run on its own source.
+[! outbuf [H [* [* tok_count 2] 8]]]
+[! total_reads 0] [! total_resolved 0] [! total_unresolved 0]
+[! mi 0]
+[W [< mi main_count] [D
+  [! mstart [@@ mains [* mi 2]]]
+  [! oc [collect_reads tokens match src mstart outbuf 0]]
+  [! ri 0]
+  [W [< ri oc] [D
+    [! rst [@@ outbuf [* ri 2]]] [! rln [@@ outbuf [+ [* ri 2] 1]]]
+    [! total_reads [+ total_reads 1]]
+    [? [decl_contains src main_decl main_decl_count rst rln]
+      [! total_resolved [+ total_resolved 1]]
+      [D [! total_unresolved [+ total_unresolved 1]] [. "SemanticError: unresolved read in main at byte" rst "len" rln]]]
+    [! ri [+ ri 1]]
+  ]]
+  [! mi [+ mi 1]]
+]]
+[. "=== stage 6b: read validation, main ==="]
+[. "MAIN_READS_TOTAL=" total_reads "RESOLVED=" total_resolved "UNRESOLVED=" total_unresolved]
+
+[! fi 0]
+[! fn_reads_total 0] [! fn_reads_resolved 0] [! fn_reads_unresolved 0]
+[W [< fi func_count] [D
+  [! po3 [@@ funcs [+ [* fi 4] 2]]]
+  [! fend3 [@@ funcs [+ [* fi 4] 3]]]
+  [! pc3 [@@ match po3]]
+  [! b3 [+ pc3 1]]
+  [! dbuf3 [@@$ fn_decl_buf fi]]
+  [! dcount3 [@@ fn_decl_count fi]]
+  [W [< b3 fend3] [D
+    [! ce3 [next_child_end tokens match b3]]
+    [! oc3 [collect_reads tokens match src b3 outbuf 0]]
+    [! ri3 0]
+    [W [< ri3 oc3] [D
+      [! rst3 [@@ outbuf [* ri3 2]]] [! rln3 [@@ outbuf [+ [* ri3 2] 1]]]
+      [! fn_reads_total [+ fn_reads_total 1]]
+      [? [decl_contains src dbuf3 dcount3 rst3 rln3]
+        [! fn_reads_resolved [+ fn_reads_resolved 1]]
+        [D [! fn_reads_unresolved [+ fn_reads_unresolved 1]] [. "SemanticError: unresolved read in fn" fi "at byte" rst3 "len" rln3]]]
+      [! ri3 [+ ri3 1]]
+    ]]
+    [! b3 [+ ce3 1]]
+  ]]
+  [! fi [+ fi 1]]
+]]
+[. "=== stage 6b: read validation, functions ==="]
+[. "FN_READS_TOTAL=" fn_reads_total "RESOLVED=" fn_reads_resolved "UNRESOLVED=" fn_reads_unresolved]
+
+// --- stage 10 driver: emit full assembly for the loaded source -------------
+// The driver still uses the historical fixed paths: read code.aic, write out.s.
+// Stage 10 bootstrap can exercise self-hosting by making the loaded source be
+// compiler.aic (or by replacing the path in-memory during verification).
+[! cg_main_types [H [* [+ main_decl_count 1] 8]]]
+[! cg_bodyh [O "out_body.s" "w"]]
+[! cg_str_values [H [* [+ tok_count 1] 8]]]
+[! cgctx [H 120]]
+[@@! cgctx 0 cg_bodyh]
+[@@! cgctx 1 0]
+[@@$! cgctx 2 main_decl]
+[@@! cgctx 3 main_decl_count]
+[@@$! cgctx 4 funcs]
+[@@$! cgctx 5 fn_param_count]
+[@@! cgctx 6 func_count]
+[@@$! cgctx 7 ".Lret_test"]
+[@@! cgctx 8 0]
+[@@$! cgctx 9 fn_ret_is_str]
+[@@! cgctx 10 -1]
+[@@$! cgctx 11 cg_str_values]
+[@@$! cgctx 12 cg_main_types]
+[@@! cgctx 13 0]
+[@@! cgctx 14 0]
+
+[! cg_mi 0]
+[W [< cg_mi main_count] [D
+  [! cg_mstart [@@ mains [* cg_mi 2]]]
+  [infer_stmt_types tokens match src cg_mstart cgctx]
+  [! cg_mi [+ cg_mi 1]]
+]]
+
+[! cg_fi 0]
+[W [< cg_fi func_count] [D
+  [! cg_tbuf [@@$ fn_type_buf cg_fi]]
+  [@@$! cgctx 2 [@@$ fn_decl_buf cg_fi]]
+  [@@! cgctx 3 [@@ fn_decl_count cg_fi]]
+  [@@$! cgctx 12 cg_tbuf]
+  [@@! cgctx 10 cg_fi]
+  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
+  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_pc [@@ match cg_po]]
+  [! cg_b [+ cg_pc 1]]
+  [W [< cg_b cg_fend] [D
+    [! cg_ce [next_child_end tokens match cg_b]]
+    [infer_stmt_types tokens match src cg_b cgctx]
+    [! cg_b [+ cg_ce 1]]
+  ]]
+  [! cg_fi [+ cg_fi 1]]
+]]
+
+[@@$! cgctx 2 main_decl]
+[@@! cgctx 3 main_decl_count]
+[@@$! cgctx 12 cg_main_types]
+[@@! cgctx 10 -1]
+[emit_main_prologue cg_bodyh [frame_size_for main_decl_count]]
+[emit_zero_slots cg_bodyh main_decl_count]
+[! cg_mi 0]
+[W [< cg_mi main_count] [D
+  [! cg_mstart [@@ mains [* cg_mi 2]]]
+  [emit_stmt tokens match src cg_mstart cgctx]
+  [! cg_mi [+ cg_mi 1]]
+]]
+[emit_main_epilogue cg_bodyh]
+[? [> func_count 0] [K cg_bodyh "\n"] [D]]
+
+[! cg_fi 0]
+[W [< cg_fi func_count] [D
+  [! cg_dbuf [@@$ fn_decl_buf cg_fi]]
+  [! cg_dcount [@@ fn_decl_count cg_fi]]
+  [! cg_pcount [@@ fn_param_count cg_fi]]
+  [! cg_tbuf [@@$ fn_type_buf cg_fi]]
+  [@@$! cgctx 2 cg_dbuf]
+  [@@! cgctx 3 cg_dcount]
+  [@@$! cgctx 12 cg_tbuf]
+  [@@! cgctx 10 cg_fi]
+  [emit_function_prologue tokens src funcs cg_fi cg_bodyh [frame_size_for cg_dcount]]
+  [? [== cg_pcount 0] [K cg_bodyh "\n"] [emit_arg_copies cg_bodyh cg_pcount]]
+  [? [== cg_pcount cg_dcount] [K cg_bodyh "\n"] [emit_zero_slots_from cg_bodyh cg_pcount cg_dcount]]
+  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
+  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_pc [@@ match cg_po]]
+  [! cg_b [+ cg_pc 1]]
+  [W [< cg_b cg_fend] [D
+    [! cg_ce [next_child_end tokens match cg_b]]
+    [emit_stmt tokens match src cg_b cgctx]
+    [! cg_b [+ cg_ce 1]]
+  ]]
+  [emit_function_epilogue tokens src funcs cg_fi cg_bodyh]
+  [? [< [+ cg_fi 1] func_count] [K cg_bodyh "\n"] [D]]
+  [! cg_fi [+ cg_fi 1]]
+]]
+[X cg_bodyh]
+
+[! cg_outh [O "out.s" "w"]]
+[emit_rodata_prefix cg_outh]
+[emit_str_rodata cg_str_values [@@ cgctx 8] cg_outh]
+[? [@@ cgctx 13] [emit_rodata_divzero cg_outh] [D]]
+[? [&& [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [D]]
+[? [@@ cgctx 14] [emit_rodata_runtime cg_outh] [D]]
+[? [&& [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [K cg_outh "\n\n"]]
+[K cg_outh "    .text\n"]
+[copy_file_to "out_body.s" cg_outh]
+[? [@@ cgctx 13] [emit_divzero_handler cg_outh] [D]]
+[? [@@ cgctx 14] [emit_runtime_handler cg_outh] [D]]
+[? [|| [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [K cg_outh "\n\n"]]
+[emit_note_section cg_outh]
+[X cg_outh]

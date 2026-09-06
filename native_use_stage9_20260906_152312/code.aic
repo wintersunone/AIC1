@@ -1,0 +1,15 @@
+[§ add [a b]
+  [! z [+ a b]]
+  [^ z]
+]
+
+[§ [$ make_msg] []
+  [^ "from-fn"]
+]
+
+[! x 2]
+[! y 5]
+[! total [add x y]]
+
+[. "main-total" total]
+[. [make_msg]]
