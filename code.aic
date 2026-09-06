@@ -1,0 +1,16 @@
+[! start [T]]
+
+[! i 0]
+[! total 0]
+[W [< i 1000000]
+    [D
+        [! total [+ total i]]
+        [! i [+ i 1]]
+    ]
+]
+
+[! end [T]]
+
+[. "--- DSS BENCHMARK ---"]
+[. "Total:" total]
+[. "Elapsed Seconds:" [- end start]]
