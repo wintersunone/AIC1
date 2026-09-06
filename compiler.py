@@ -461,7 +461,21 @@ def _op_fread(node, env):
 
 def _op_fwrite(node, env):
     f = _resolve_handle(node, 1, env, "K")
-    data = str(to_raw(eval_node(node[2], env)))
+    v = eval_node(node[2], env)
+    raw = to_raw(v)
+    # Mirror native codegen's 'K' (a real strlen@PLT call before fwrite):
+    # stop at the first zero byte rather than writing a heap buffer's full
+    # allocated size. Same reasoning _op_len already documents for 'L' -
+    # without this, K on an H-allocated buffer would write one extra
+    # embedded NUL byte in the interpreter that native codegen's
+    # strlen-bounded fwrite would never emit. Latent until something
+    # actually K'd a heap buffer (e.g. a name sliced out of source text)
+    # rather than a plain string literal.
+    if isinstance(v, bytearray):
+        nul = raw.find("\x00")
+        if nul != -1:
+            raw = raw[:nul]
+    data = str(raw)
     try:
         return f.write(data.encode("latin-1", errors="replace"))
     except OSError as e:
