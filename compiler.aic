@@ -63,13 +63,27 @@
 //             the '^' head-symbol token itself instead of the token one
 //             past it, so every '[^ expr]' silently emitted a bogus
 //             0(%rbp) read instead of expr's real value.
+//   Stage 8b - print statements plus top-level libc ops (H/L/N/V/O/Z/R/K/X)
+//             in statement/expression-emitter positions. Verified byte-for-
+//             byte identical against aic_codegen.py's own Codegen.compile_stmt
+//             (test_stage8b.aic / stage8b_src.aic), including string literals
+//             and string-returning user functions in print position.
 //
-// Next: stage 8b - '.' (print, needs per-expression static typing to pick
-// %s vs %lld) and top-level libc ops (H/L/N/V/O/Z/R/K/X) as statements -
-// both deliberately deferred by Stage 7's emit_expr and Stage 8a's
-// emit_stmt. After that: stage 9 (real per-function frames - prologue/
-// epilogue/param copy-in/frame sizing) and stage 10 (the driver + self-
-// hosting bootstrap diff).
+//   Stage 9 - full-program assembly builder: main/function prologues,
+//             frame sizing, param copy-in, zero-init, per-scope type tables,
+//             rodata prefix/body/note assembly stitching.
+//   Stage 10 - self-hosting bootstrap assembly diff: compiler.aic compiled
+//              by aic_codegen.py and compiler.aic running under compiler.py
+//              now produce byte-for-byte identical assembly on this host.
+//
+//   Native closure on this Windows host: compiler.aic now emits MinGW bridge-
+//              target assembly directly. Linked with the assembly-only CRT
+//              bridge, compiler_gen0_direct.exe compiled compiler.aic again
+//              and its output matched compiler_gen0.s byte-for-byte.
+//
+// Next: replace fixed code.aic/out.s paths with a native CLI or an AIC-level
+// path-selection primitive so the self-hosted compiler is ergonomic, not just
+// self-hosted.
 //
 // Helper functions written in AIC itself, not the compiler: is_section,
 // slice_str (real heap string-building: allocate + loop with @/@!),
@@ -211,13 +225,13 @@
 // Verified byte-for-byte identical against aic_codegen.py's own
 // Codegen.compile_expr output (see test_stage7b.aic / stage7d_src.aic).
 //
-// --- stage 8a: statement emitter (compile_stmt) -----------------------------
+// --- stage 8: statement emitter (compile_stmt) ------------------------------
 // Ports aic_codegen.py's Codegen.compile_stmt into AIC: '!' (assign),
 // '^' (return), '?' (if/else), 'W' (while), 'D' (do-block), and bare
-// byte/word-op/call statements. '.' (print) and libc-op statements are
-// Stage 8b's job (need per-expression static typing, not yet ported).
-// Verified byte-for-byte identical against aic_codegen.py's own
-// Codegen.compile_stmt output (see test_stage8.aic / stage8_src.aic).
+// byte/word/libc-op/call statements plus '.' print dispatch.
+// Stage 8a covered control-flow/bare byte-word-call statements; Stage 8b
+// added static print typing, string-literal emission, and libc op codegen.
+// Both slices were verified byte-for-byte against aic_codegen.py.
 
 [§ decl_index [[$ src] [$ recs] count start len] [D [! i 0] [! result -1] [W [&& [== result -1] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! result i] [D]] [! i [+ i 1]]]] [^ result]]]
 
@@ -239,7 +253,7 @@
 // matching aic_codegen.py's _ARG_REGS exactly. All branches return a
 // string literal, so this satisfies the same "both branches same type"
 // rule '?'-as-a-value enforces on itself.
-[§ argreg_name [i] [^ [? [== i 0] "%rdi" [? [== i 1] "%rsi" [? [== i 2] "%rdx" [? [== i 3] "%rcx" [? [== i 4] "%r8" "%r9"]]]]]]]
+[§ [$ argreg_name] [i] [^ [? [== i 0] "%rdi" [? [== i 1] "%rsi" [? [== i 2] "%rdx" [? [== i 3] "%rcx" [? [== i 4] "%r8" "%r9"]]]]]]]
 
 [§ binop_code1 [b] [^ [? [== b 43] 1 [? [== b 45] 2 [? [== b 42] 3 [? [== b 47] 4 [? [== b 37] 5 [? [== b 38] 6 [? [== b 124] 7 [? [== b 60] 8 [? [== b 62] 9 -1]]]]]]]]]]]
 [§ binop_code2 [b0 b1] [^ [? [&& [== b0 61] [== b1 61]] 10 [? [&& [== b0 33] [== b1 61]] 11 [? [&& [== b0 60] [== b1 61]] 12 [? [&& [== b0 62] [== b1 61]] 13 [? [&& [== b0 94] [== b1 94]] 14 [? [&& [== b0 60] [== b1 60]] 15 [? [&& [== b0 62] [== b1 62]] 16 -1]]]]]]]]]
@@ -313,6 +327,7 @@
   [! fpc [@@$ ctx 5]]
   [! pcount [@@ fpc fi]]
   [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
   [! nst [@@ tokens [+ [* name_tok 3] 1]]]
   [! nln [@@ tokens [+ [* name_tok 3] 2]]]
   [! op_tok [+ s 1]]
@@ -349,10 +364,254 @@
   [! found -1]
   [W [&& [== found -1] [< fi fcount]] [D
     [! nmtok [@@ funcs [+ [* fi 4] 1]]]
+    [? [== [@@ tokens [* nmtok 3]] 1] [! nmtok [+ nmtok 2]] [D]]
     [? [streq src hst hln [@@ tokens [+ [* nmtok 3] 1]] [@@ tokens [+ [* nmtok 3] 2]]] [! found fi] [D]]
     [! fi [+ fi 1]]
   ]]
   [^ found]
+]]
+
+// streq_ptr / string_label_num: ctx slot 8 = count of distinct rodata strings,
+// ctx slot 11 = pointer table. This mirrors Python Codegen.string_label:
+// repeated literals and synthetic fopen modes reuse the same aicstr_N label.
+[§ streq_ptr [[$ a] [$ b]] [D
+  [! alen [L a]]
+  [! blen [L b]]
+  [? [!= alen blen] [^ 0] [D]]
+  [! ok 1]
+  [! i 0]
+  [W [&& ok [< i alen]] [D
+    [? [!= [@ a i] [@ b i]] [! ok 0] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ ok]
+]]
+
+[§ string_label_num [[$ ctx] [$ val]] [D
+  [! vals [@@$ ctx 11]]
+  [! count [@@ ctx 8]]
+  [! i 0]
+  [! found -1]
+  [W [&& [== found -1] [< i count]] [D
+    [! existing [@@$ vals i]]
+    [? [streq_ptr val existing] [! found i] [D]]
+    [! i [+ i 1]]
+  ]]
+  [? [!= found -1] [^ found] [D]]
+  [@@$! vals count val]
+  [@@! ctx 8 [+ count 1]]
+  [^ count]
+]]
+
+[§ [$ fopen_mode_value] [[$ tokens] [$ src] mode_tok] [D
+  [! st [@@ tokens [+ [* mode_tok 3] 1]]]
+  [! c [@ src st]]
+  [? [== c 114] [^ "rb"] [? [== c 119] [^ "wb"] [^ "ab"]]]
+]]
+
+// static_type: mirrors aic_codegen.py's Codegen._static_type for the cases
+// codegen itself needs while printing: string literals, variable reads through
+// the active scope type table (ctx slot 12), libc ops that return STR (H/N/R),
+// user-function declared return type (ctx slot 9), and ternary value forms via
+// their then-branch.
+[§ static_type [[$ tokens] [$ match] [$ src] p [$ ctx]] [D
+  [! tag [@@ tokens [* p 3]]]
+  [? [== tag 4] [^ 1] [D]]
+  [? [== tag 3] [D
+      [! ast [@@ tokens [+ [* p 3] 1]]]
+      [! aln [@@ tokens [+ [* p 3] 2]]]
+      [? [is_numeric_atom src ast aln] [^ 0] [D]]
+      [! decls [@@$ ctx 2]]
+      [! dcount [@@ ctx 3]]
+      [! idx [decl_index src decls dcount ast aln]]
+      [? [< idx 0] [^ 0] [D]]
+      [! types [@@$ ctx 12]]
+      [^ [@@ types idx]]
+    ] [D]]
+  [! op_tok [+ p 1]]
+  [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+  [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+  [! opcode -2]
+  [? [== hln 1] [! opcode [classify_op1 [@ src hst]]] [D]]
+  [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
+  [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+  [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+  [? [|| [== opcode 13] [|| [== opcode 15] [== opcode 19]]] [^ 1] [D]]
+  [? [== opcode 3] [D
+      [! cond [+ op_tok 1]]
+      [! ce [next_child_end tokens match cond]]
+      [! then_tok [+ ce 1]]
+      [^ [static_type tokens match src then_tok ctx]]
+    ] [D]]
+  [! found [resolve_func tokens src hst hln ctx]]
+  [? [!= found -1] [D
+      [! fnret [@@$ ctx 9]]
+      [^ [@@ fnret found]]
+    ] [D]]
+  [^ 0]
+]]
+
+// emit_libc_op: 'H L N V O Z R K X' (opcodes 13-21) used in an expression
+// position. The statement dispatcher can delegate bare libc forms here too,
+// exactly like aic_codegen.py's compile_stmt does.
+[§ emit_libc_op [[$ tokens] [$ match] [$ src] s [$ ctx] code] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! arg1 [+ op_tok 1]]
+  [? [== code 13] [D
+      [@@! ctx 14 1]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    leaq    1(%rax), %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    call    aic_calloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+    ] [D]]
+  [? [== code 14] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_strlen\n"]
+    ] [D]]
+  [? [== code 15] [D
+      [@@! ctx 14 1]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [K h "    movq    $24, %rdi\n"]
+      [K h "    call    aic_malloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    leaq    fmt_d(%rip), %rsi\n"]
+      [K h "    movq    %r12, %rdx\n"]
+      [K h "    xorl    %eax, %eax\n"]
+      [K h "    call    aic_sprintf\n"]
+      [K h "    movq    %r13, %rax\n"]
+    ] [D]]
+  [? [== code 16] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    xorl    %esi, %esi\n"]
+      [K h "    movq    $10, %rdx\n"]
+      [K h "    call    aic_strtol\n"]
+    ] [D]]
+  [? [== code 17] [D
+      [@@! ctx 14 1]
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [! mval [fopen_mode_value tokens src arg2]]
+      [! nlbl [string_label_num ctx mval]] [! nlbltxt [N nlbl]]
+      [K h "    leaq    aicstr_"] [K h nlbltxt] [K h "(%rip), %rsi\n"]
+      [K h "    call    aic_fopen\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lopenok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lopenok"] [K h lbltxt] [K h ":\n"]
+    ] [D]]
+  [? [== code 18] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    call    aic_ftell\n"]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    movq    $0, %rsi\n"]
+      [K h "    movq    $2, %rdx\n"]
+      [K h "    call    aic_fseek\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    call    aic_ftell\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r12, %rdi\n"]
+      [K h "    movq    %r13, %rsi\n"]
+      [K h "    movq    $0, %rdx\n"]
+      [K h "    call    aic_fseek\n"]
+      [K h "    movq    %r14, %rax\n"]
+    ] [D]]
+  [? [== code 19] [D
+      [@@! ctx 14 1]
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [emit_expr tokens match src arg2 ctx]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    leaq    1(%r13), %rdi\n"]
+      [K h "    call    aic_malloc\n"]
+      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
+      [K h "    testq   %rax, %rax\n"]
+      [K h "    jne     .Lallocok"] [K h lbltxt] [K h "\n"]
+      [K h "    jmp     .Lruntimeerror\n"]
+      [K h ".Lallocok"] [K h lbltxt] [K h ":\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r14, %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    movq    %r13, %rdx\n"]
+      [K h "    movq    %r12, %rcx\n"]
+      [K h "    call    aic_fread\n"]
+      [K h "    movb    $0, (%r14,%rax)\n"]
+      [K h "    movq    %r14, %rax\n"]
+    ] [D]]
+  [? [== code 20] [D
+      [! a1e [next_child_end tokens match arg1]]
+      [! arg2 [+ a1e 1]]
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %r12\n"]
+      [emit_expr tokens match src arg2 ctx]
+      [K h "    movq    %rax, %r13\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    call    aic_strlen\n"]
+      [K h "    movq    %rax, %r14\n"]
+      [K h "    movq    %r13, %rdi\n"]
+      [K h "    movq    $1, %rsi\n"]
+      [K h "    movq    %r14, %rdx\n"]
+      [K h "    movq    %r12, %rcx\n"]
+      [K h "    call    aic_fwrite\n"]
+    ] [D]]
+  [? [== code 21] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_fclose\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+// emit_print: '[. expr ...]' - zero or more args, each compiled then
+// printed through the format string selected by static_type and position.
+[§ emit_print [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! e [@@ match s]]
+  [! first [+ op_tok 1]]
+  [? [== first e] [D
+      [K h "    leaq    nl_only(%rip), %rdi\n"]
+      [K h "    xorl    %eax, %eax\n"]
+      [K h "    call    aic_printf\n"]
+    ] [D
+      [! p first]
+      [W [< p e] [D
+        [! ne [+ [next_child_end tokens match p] 1]]
+        [! is_last [== ne e]]
+        [emit_expr tokens match src p ctx]
+        [! is_str [static_type tokens match src p ctx]]
+        [? is_str
+          [? is_last [K h "    leaq    fmt_s_nl(%rip), %rdi\n"] [K h "    leaq    fmt_s_sp(%rip), %rdi\n"]]
+          [? is_last [K h "    leaq    fmt_nl(%rip), %rdi\n"] [K h "    leaq    fmt_sp(%rip), %rdi\n"]]]
+        [K h "    movq    %rax, %rsi\n"]
+        [K h "    xorl    %eax, %eax\n"]
+        [K h "    call    aic_printf\n"]
+        [! p ne]
+      ]]
+    ]]
+  [^ 0]
 ]]
 
 // emit_shortcircuit: '&&'/'||', short-circuit exactly like C/JS - the
@@ -423,6 +682,7 @@
   [? [== code 2] [K h "    subq    %rbx, %rax\n"] [D]]
   [? [== code 3] [K h "    imulq   %rbx, %rax\n"] [D]]
   [? [|| [== code 4] [== code 5]] [D
+      [@@! ctx 13 1]
       [! lbl [new_label_num ctx]]
       [! lbltxt [N lbl]]
       [K h "    testq   %rbx, %rbx\n"]
@@ -451,7 +711,14 @@
 [§ emit_expr [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
   [! h [@@ ctx 0]]
   [! tag [@@ tokens [* s 3]]]
-  [? [== tag 3] [D
+  [? [== tag 4] [D
+      [! st [@@ tokens [+ [* s 3] 1]]]
+      [! ln [@@ tokens [+ [* s 3] 2]]]
+      [! sval [slice_str src st ln]]
+      [! n [string_label_num ctx sval]]
+      [! ntxt [N n]]
+      [K h "    leaq    aicstr_"] [K h ntxt] [K h "(%rip), %rax\n"]
+    ] [? [== tag 3] [D
       [! ast [@@ tokens [+ [* s 3] 1]]]
       [! aln [@@ tokens [+ [* s 3] 2]]]
       [? [is_numeric_atom src ast aln] [D
@@ -489,7 +756,9 @@
               [emit_byte_op tokens match src s ctx opcode]
               [? [|| [|| [== opcode 9] [== opcode 10]] [|| [== opcode 11] [== opcode 12]]]
                 [emit_word_op tokens match src s ctx opcode]
-                [D
+                [? [&& [>= opcode 13] [<= opcode 21]]
+                  [emit_libc_op tokens match src s ctx opcode]
+                  [D
                   [! bcode [binop_classify src hst hln]]
                   [? [!= bcode -1]
                     [D
@@ -509,8 +778,8 @@
                   [emit_call tokens match src s ctx found]
                   [. "CodegenError: emit_expr - unresolved symbol in expression position"]]
               ]]
-          ]]]]]]
-    ]]
+            ]]]]]]]
+    ]]]
 ]]
 
 // emit_assign: '[! name expr]' - compile the RHS, store %rax to name's
@@ -541,7 +810,17 @@
   [! op_tok [+ s 1]]
   [! expr_tok [+ op_tok 1]]
   [emit_expr tokens match src expr_tok ctx]
-  [K h "    jmp     "] [K h [@@$ ctx 7]] [K h "\n"]
+  [! curfi [@@ ctx 10]]
+  [? [>= curfi 0] [D
+      [! funcs [@@$ ctx 4]]
+      [! name_tok [@@ funcs [+ [* curfi 4] 1]]]
+      [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+      [K h "    jmp     .Lret_"]
+      [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+      [K h "\n"]
+    ] [D
+      [K h "    jmp     "] [K h [@@$ ctx 7]] [K h "\n"]
+    ]]
   [^ 0]
 ]]
 
@@ -633,10 +912,9 @@
         [? [== opcode 3] [emit_if tokens match src s ctx]
           [? [== opcode 4] [emit_while tokens match src s ctx]
             [? [== opcode 5] [emit_do tokens match src s ctx]
-              [? [|| [== opcode 7] [|| [== opcode 8] [|| [== opcode 9] [|| [== opcode 10] [|| [== opcode 11] [== opcode 12]]]]]]
-                [emit_expr tokens match src s ctx]
-                [? [|| [== opcode 1] [&& [>= opcode 13] [<= opcode 21]]]
-                  [. "CodegenError: emit_stmt - dot and libc-op statements aren't implemented yet (Stage 8 scope)"]
+              [? [== opcode 1] [emit_print tokens match src s ctx]
+                [? [&& [>= opcode 7] [<= opcode 21]]
+                  [emit_expr tokens match src s ctx]
                   [D
                     [! found [resolve_func tokens src hst hln ctx]]
                     [? [!= found -1]
@@ -650,6 +928,230 @@
         ]
       ]
     ]
+  ]]
+  [^ 0]
+]]
+
+// --- stage 9a: frame-emission primitives -----------------------------------
+// Small reusable pieces for the full assembly builder: frame-size rounding,
+// stack-slot zero-initialization, and the fixed main wrapper prologue/epilogue.
+// The body emission still comes from Stage 8's emit_stmt; wiring these into a
+// whole-program driver is the next Stage 9 slice.
+[§ frame_size_for [slot_count] [D
+  [! bytes [* slot_count 8]]
+  [! rounded [* [/ [+ bytes 15] 16] 16]]
+  [? [< rounded 16] [! rounded 16] [D]]
+  [^ rounded]
+]]
+
+[§ emit_zero_slot [h idx] [D
+  [! off [* -8 [+ idx 1]]]
+  [! offtxt [N off]]
+  [K h "    movq    $0, "] [K h offtxt] [K h "(%rbp)\n"]
+  [^ 0]
+]]
+
+[§ emit_zero_slots [h slot_count] [D
+  [! i 0]
+  [W [< i slot_count] [D
+    [emit_zero_slot h i]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_zero_slots_from [h start slot_count] [D
+  [! i start]
+  [W [< i slot_count] [D
+    [emit_zero_slot h i]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_main_prologue [h frame_size] [D
+  [! fstxt [N frame_size]]
+  [K h "    .globl aic_main\n"]
+  [K h "aic_main:\n"]
+  [K h "    pushq   %rbp\n"]
+  [K h "    movq    %rsp, %rbp\n"]
+  [K h "    subq    $"] [K h fstxt] [K h ", %rsp\n"]
+  [^ 0]
+]]
+
+[§ emit_main_epilogue [h] [D
+  [K h "    movq    $0, %rax\n"]
+  [K h "    leave\n"]
+  [K h "    ret\n"]
+  [^ 0]
+]]
+
+[§ emit_function_prologue [[$ tokens] [$ src] [$ funcs] fi h frame_size] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+  [! fstxt [N frame_size]]
+  [K h "aicfn_"]
+  [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+  [K h ":\n"]
+  [K h "    pushq   %rbp\n"]
+  [K h "    movq    %rsp, %rbp\n"]
+  [K h "    subq    $"] [K h fstxt] [K h ", %rsp\n"]
+  [^ 0]
+]]
+
+[§ emit_arg_copies [h pcount] [D
+  [! i 0]
+  [W [< i pcount] [D
+    [! off [* -8 [+ i 1]]]
+    [! offtxt [N off]]
+    [K h "    movq    "] [K h [argreg_name i]] [K h ", "] [K h offtxt] [K h "(%rbp)\n"]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_function_epilogue [[$ tokens] [$ src] [$ funcs] fi h] [D
+  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
+  [K h "    movq    $0, %rax\n"]
+  [K h ".Lret_"]
+  [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
+  [K h ":\n"]
+  [K h "    leave\n"]
+  [K h "    ret\n"]
+  [^ 0]
+]]
+
+[§ [$ dq] [] [D [! b [H 1]] [@! b 0 34] [^ b]]]
+
+[§ emit_rodata_prefix [h] [D
+  [! q [dq]]
+  [K h "    .section .rodata\n"]
+  [K h "fmt_nl:\n"]
+  [K h "    .string "] [K h q] [K h "%ld\\n"] [K h q] [K h "\n"]
+  [K h "fmt_sp:\n"]
+  [K h "    .string "] [K h q] [K h "%ld "] [K h q] [K h "\n"]
+  [K h "fmt_s_nl:\n"]
+  [K h "    .string "] [K h q] [K h "%s\\n"] [K h q] [K h "\n"]
+  [K h "fmt_s_sp:\n"]
+  [K h "    .string "] [K h q] [K h "%s "] [K h q] [K h "\n"]
+  [K h "fmt_d:\n"]
+  [K h "    .string "] [K h q] [K h "%ld"] [K h q] [K h "\n"]
+  [K h "nl_only:\n"]
+  [K h "    .string "] [K h q] [K h "\\n"] [K h q] [K h "\n"]
+  [^ 0]
+]]
+
+[§ emit_str_rodata [[$ str_values] count h] [D
+  [! q [dq]]
+  [! i 0]
+  [W [< i count] [D
+    [! val [@@$ str_values i]]
+    [! itxt [N i]]
+    [K h "aicstr_"] [K h itxt] [K h ":\n"]
+    [K h "    .string "] [K h q]
+    [K h val]
+    [K h q] [K h "\n"]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
+
+[§ emit_rodata_divzero [h] [D
+  [! q [dq]]
+  [K h "divzero_msg:\n"]
+  [K h "    .string "] [K h q] [K h "AIC Runtime Error: Division by zero\\n"] [K h q] [K h "\n"]
+  [K h "divzero_msg_end:\n"]
+  [K h "    .equ divzero_len, divzero_msg_end - divzero_msg - 1\n"]
+  [^ 0]
+]]
+
+[§ emit_rodata_runtime [h] [D
+  [! q [dq]]
+  [K h "runtimeerr_msg:\n"]
+  [K h "    .string "] [K h q] [K h "AIC Runtime Error: a file or memory operation failed (open/allocate)\\n"] [K h q] [K h "\n"]
+  [K h "runtimeerr_msg_end:\n"]
+  [K h "    .equ runtimeerr_len, runtimeerr_msg_end - runtimeerr_msg - 1\n"]
+  [^ 0]
+]]
+
+[§ emit_divzero_handler [h] [D
+  [K h "\n\n.Ldivzero:\n"]
+  [K h "    leaq    divzero_msg(%rip), %rsi\n"]
+  [K h "    movq    %rsi, %rdi\n"]
+  [K h "    call    aic_runtime_error\n"]
+  [^ 0]
+]]
+
+[§ emit_runtime_handler [h] [D
+  [K h "\n\n.Lruntimeerror:\n"]
+  [K h "    leaq    runtimeerr_msg(%rip), %rsi\n"]
+  [K h "    movq    %rsi, %rdi\n"]
+  [K h "    call    aic_runtime_error\n"]
+  [^ 0]
+]]
+
+[§ copy_file_to [[$ path] h] [D
+  [! ih [O path "r"]]
+  [! n [Z ih]]
+  [! buf [R ih n]]
+  [K h buf]
+  [X ih]
+  [^ 0]
+]]
+
+[§ emit_note_section [h] [D
+  [^ 0]
+]]
+
+[§ infer_stmt_types [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! tag [@@ tokens [* s 3]]]
+  [? [!= tag 1] [D] [D
+    [! op_tok [+ s 1]]
+    [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+    [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+    [! opcode -2]
+    [? [== hln 1] [! opcode [classify_op1 [@ src hst]]] [D]]
+    [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
+    [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
+    [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+    [? [== opcode 2] [D
+        [! name_tok [+ op_tok 1]]
+        [! expr_tok [+ name_tok 1]]
+        [! nst [@@ tokens [+ [* name_tok 3] 1]]]
+        [! nln [@@ tokens [+ [* name_tok 3] 2]]]
+        [! decls [@@$ ctx 2]]
+        [! dcount [@@ ctx 3]]
+        [! idx [decl_index src decls dcount nst nln]]
+        [! t [static_type tokens match src expr_tok ctx]]
+        [! types [@@$ ctx 12]]
+        [@@! types idx t]
+      ] [? [== opcode 3] [D
+        [! cond [+ op_tok 1]]
+        [! ce [next_child_end tokens match cond]]
+        [! then_tok [+ ce 1]]
+        [! te [next_child_end tokens match then_tok]]
+        [! e [@@ match s]]
+        [! else_tok [+ te 1]]
+        [infer_stmt_types tokens match src then_tok ctx]
+        [? [< else_tok e] [infer_stmt_types tokens match src else_tok ctx] [D]]
+      ] [? [== opcode 4] [D
+        [! cond [+ op_tok 1]]
+        [! ce [next_child_end tokens match cond]]
+        [! e [@@ match s]]
+        [! p [+ ce 1]]
+        [W [< p e] [D
+          [infer_stmt_types tokens match src p ctx]
+          [! p [+ [next_child_end tokens match p] 1]]
+        ]]
+      ] [? [== opcode 5] [D
+        [! e [@@ match s]]
+        [! p [+ op_tok 1]]
+        [W [< p e] [D
+          [infer_stmt_types tokens match src p ctx]
+          [! p [+ [next_child_end tokens match p] 1]]
+        ]]
+      ] [D]]]]]
   ]]
   [^ 0]
 ]]
@@ -704,6 +1206,8 @@
 [! fn_param_count [H [* [+ func_count 1] 8]]]
 [! fn_decl_buf [H [* [+ func_count 1] 8]]]
 [! fn_decl_count [H [* [+ func_count 1] 8]]]
+[! fn_type_buf [H [* [+ func_count 1] 8]]]
+[! fn_ret_is_str [H [* [+ func_count 1] 8]]]
 [! fi 0]
 [! po 0]
 [! pc 0]
@@ -717,6 +1221,7 @@
 [! bstart 0]
 [! b 0]
 [! fend 0]
+[! qi 0]
 [W [< fi func_count] [D
   [! po [@@ funcs [+ [* fi 4] 2]]]
   [! fend [@@ funcs [+ [* fi 4] 3]]]
@@ -745,10 +1250,20 @@
       [D]]
     [! b [+ b 1]]
   ]]
+  [sort_decls src dbuf pcnt dcnt]
+  [! tbuf [H [* [+ dcnt 1] 8]]]
+  [! qi 0]
+  [W [< qi pcnt] [D
+    [@@! tbuf qi [@@ pbuf [+ [* qi 2] 1]]]
+    [! qi [+ qi 1]]
+  ]]
   [@@$! fn_param_buf fi pbuf]
   [@@! fn_param_count fi pcnt]
   [@@$! fn_decl_buf fi dbuf]
   [@@! fn_decl_count fi dcnt]
+  [@@$! fn_type_buf fi tbuf]
+  [! nt [@@ funcs [+ [* fi 4] 1]]]
+  [@@! fn_ret_is_str fi [? [== [@@ tokens [* nt 3]] 1] 1 0]]
   [! fi [+ fi 1]]
 ]]
 
@@ -772,6 +1287,7 @@
   ]]
   [! mi [+ mi 1]]
 ]]
+[sort_decls src main_decl 0 main_decl_count]
 
 [. "FUNC_COUNT" func_count]
 [. "MAIN_COUNT" main_count]
@@ -879,3 +1395,111 @@
 ]]
 [. "=== stage 6b: read validation, functions ==="]
 [. "FN_READS_TOTAL=" fn_reads_total "RESOLVED=" fn_reads_resolved "UNRESOLVED=" fn_reads_unresolved]
+
+// --- stage 10 driver: emit full assembly for the loaded source -------------
+// The driver still uses the historical fixed paths: read code.aic, write out.s.
+// Stage 10 bootstrap can exercise self-hosting by making the loaded source be
+// compiler.aic (or by replacing the path in-memory during verification).
+[! cg_main_types [H [* [+ main_decl_count 1] 8]]]
+[! cg_bodyh [O "out_body.s" "w"]]
+[! cg_str_values [H [* [+ tok_count 1] 8]]]
+[! cgctx [H 120]]
+[@@! cgctx 0 cg_bodyh]
+[@@! cgctx 1 0]
+[@@$! cgctx 2 main_decl]
+[@@! cgctx 3 main_decl_count]
+[@@$! cgctx 4 funcs]
+[@@$! cgctx 5 fn_param_count]
+[@@! cgctx 6 func_count]
+[@@$! cgctx 7 ".Lret_test"]
+[@@! cgctx 8 0]
+[@@$! cgctx 9 fn_ret_is_str]
+[@@! cgctx 10 -1]
+[@@$! cgctx 11 cg_str_values]
+[@@$! cgctx 12 cg_main_types]
+[@@! cgctx 13 0]
+[@@! cgctx 14 0]
+
+[! cg_mi 0]
+[W [< cg_mi main_count] [D
+  [! cg_mstart [@@ mains [* cg_mi 2]]]
+  [infer_stmt_types tokens match src cg_mstart cgctx]
+  [! cg_mi [+ cg_mi 1]]
+]]
+
+[! cg_fi 0]
+[W [< cg_fi func_count] [D
+  [! cg_tbuf [@@$ fn_type_buf cg_fi]]
+  [@@$! cgctx 2 [@@$ fn_decl_buf cg_fi]]
+  [@@! cgctx 3 [@@ fn_decl_count cg_fi]]
+  [@@$! cgctx 12 cg_tbuf]
+  [@@! cgctx 10 cg_fi]
+  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
+  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_pc [@@ match cg_po]]
+  [! cg_b [+ cg_pc 1]]
+  [W [< cg_b cg_fend] [D
+    [! cg_ce [next_child_end tokens match cg_b]]
+    [infer_stmt_types tokens match src cg_b cgctx]
+    [! cg_b [+ cg_ce 1]]
+  ]]
+  [! cg_fi [+ cg_fi 1]]
+]]
+
+[@@$! cgctx 2 main_decl]
+[@@! cgctx 3 main_decl_count]
+[@@$! cgctx 12 cg_main_types]
+[@@! cgctx 10 -1]
+[emit_main_prologue cg_bodyh [frame_size_for main_decl_count]]
+[emit_zero_slots cg_bodyh main_decl_count]
+[! cg_mi 0]
+[W [< cg_mi main_count] [D
+  [! cg_mstart [@@ mains [* cg_mi 2]]]
+  [emit_stmt tokens match src cg_mstart cgctx]
+  [! cg_mi [+ cg_mi 1]]
+]]
+[emit_main_epilogue cg_bodyh]
+[? [> func_count 0] [K cg_bodyh "\n"] [D]]
+
+[! cg_fi 0]
+[W [< cg_fi func_count] [D
+  [! cg_dbuf [@@$ fn_decl_buf cg_fi]]
+  [! cg_dcount [@@ fn_decl_count cg_fi]]
+  [! cg_pcount [@@ fn_param_count cg_fi]]
+  [! cg_tbuf [@@$ fn_type_buf cg_fi]]
+  [@@$! cgctx 2 cg_dbuf]
+  [@@! cgctx 3 cg_dcount]
+  [@@$! cgctx 12 cg_tbuf]
+  [@@! cgctx 10 cg_fi]
+  [emit_function_prologue tokens src funcs cg_fi cg_bodyh [frame_size_for cg_dcount]]
+  [? [== cg_pcount 0] [K cg_bodyh "\n"] [emit_arg_copies cg_bodyh cg_pcount]]
+  [? [== cg_pcount cg_dcount] [K cg_bodyh "\n"] [emit_zero_slots_from cg_bodyh cg_pcount cg_dcount]]
+  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
+  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_pc [@@ match cg_po]]
+  [! cg_b [+ cg_pc 1]]
+  [W [< cg_b cg_fend] [D
+    [! cg_ce [next_child_end tokens match cg_b]]
+    [emit_stmt tokens match src cg_b cgctx]
+    [! cg_b [+ cg_ce 1]]
+  ]]
+  [emit_function_epilogue tokens src funcs cg_fi cg_bodyh]
+  [? [< [+ cg_fi 1] func_count] [K cg_bodyh "\n"] [D]]
+  [! cg_fi [+ cg_fi 1]]
+]]
+[X cg_bodyh]
+
+[! cg_outh [O "out.s" "w"]]
+[emit_rodata_prefix cg_outh]
+[emit_str_rodata cg_str_values [@@ cgctx 8] cg_outh]
+[? [@@ cgctx 13] [emit_rodata_divzero cg_outh] [D]]
+[? [&& [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [D]]
+[? [@@ cgctx 14] [emit_rodata_runtime cg_outh] [D]]
+[? [&& [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [K cg_outh "\n\n"]]
+[K cg_outh "    .text\n"]
+[copy_file_to "out_body.s" cg_outh]
+[? [@@ cgctx 13] [emit_divzero_handler cg_outh] [D]]
+[? [@@ cgctx 14] [emit_runtime_handler cg_outh] [D]]
+[? [|| [@@ cgctx 13] [@@ cgctx 14]] [K cg_outh "\n"] [K cg_outh "\n\n"]]
+[emit_note_section cg_outh]
+[X cg_outh]

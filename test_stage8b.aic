@@ -80,7 +80,7 @@
 // matching aic_codegen.py's _ARG_REGS exactly. All branches return a
 // string literal, so this satisfies the same "both branches same type"
 // rule '?'-as-a-value enforces on itself.
-[§ argreg_name [i] [^ [? [== i 0] "%rdi" [? [== i 1] "%rsi" [? [== i 2] "%rdx" [? [== i 3] "%rcx" [? [== i 4] "%r8" "%r9"]]]]]]]
+[§ [$ argreg_name] [i] [^ [? [== i 0] "%rdi" [? [== i 1] "%rsi" [? [== i 2] "%rdx" [? [== i 3] "%rcx" [? [== i 4] "%r8" "%r9"]]]]]]]
 
 [§ binop_code1 [b] [^ [? [== b 43] 1 [? [== b 45] 2 [? [== b 42] 3 [? [== b 47] 4 [? [== b 37] 5 [? [== b 38] 6 [? [== b 124] 7 [? [== b 60] 8 [? [== b 62] 9 -1]]]]]]]]]]]
 [§ binop_code2 [b0 b1] [^ [? [&& [== b0 61] [== b1 61]] 10 [? [&& [== b0 33] [== b1 61]] 11 [? [&& [== b0 60] [== b1 61]] 12 [? [&& [== b0 62] [== b1 61]] 13 [? [&& [== b0 94] [== b1 94]] 14 [? [&& [== b0 60] [== b1 60]] 15 [? [&& [== b0 62] [== b1 62]] 16 -1]]]]]]]]]
@@ -158,6 +158,7 @@
   [! fpc [@@$ ctx 5]]
   [! pcount [@@ fpc fi]]
   [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
   [! nst [@@ tokens [+ [* name_tok 3] 1]]]
   [! nln [@@ tokens [+ [* name_tok 3] 2]]]
   [! op_tok [+ s 1]]
@@ -194,6 +195,7 @@
   [! found -1]
   [W [&& [== found -1] [< fi fcount]] [D
     [! nmtok [@@ funcs [+ [* fi 4] 1]]]
+    [? [== [@@ tokens [* nmtok 3]] 1] [! nmtok [+ nmtok 2]] [D]]
     [? [streq src hst hln [@@ tokens [+ [* nmtok 3] 1]] [@@ tokens [+ [* nmtok 3] 2]]] [! found fi] [D]]
     [! fi [+ fi 1]]
   ]]
@@ -209,12 +211,9 @@
 // equivalent to the real dict's dedup-by-content - no scan/table needed.
 [§ new_strlabel_num [[$ ctx]] [D [! v [@@ ctx 8]] [@@! ctx 8 [+ v 1]] [^ v]]]
 
-// static_type: mirrors aic_codegen.py's Codegen._static_type - the subset
-// this harness needs to pick '.'s printf format (%s vs %ld): a string
-// literal is STR, a bare atom is INT (this harness's ctx carries no
-// per-variable declared-type table, exactly like
-// make_ground_truth_stage8.py's own 'cg.types = {}' - every variable
-// defaults to INT), H/N/R calls hand back STR (opcodes 13/15/19), a call
+// static_type: mirrors aic_codegen.py's Codegen._static_type. A string
+// literal is STR, a bare atom reads ctx slot 12's active scope type table,
+// H/N/R calls hand back STR (opcodes 13/15/19), a call
 // to a user function returns whatever that function's own '[$ name]'
 // signature declared (ctx slot 9, one flag per funcs[] entry, filled in
 // by the driver the same way params_open_tok's own name_tok tag check
@@ -224,7 +223,17 @@
 [§ static_type [[$ tokens] [$ match] [$ src] p [$ ctx]] [D
   [! tag [@@ tokens [* p 3]]]
   [? [== tag 4] [^ 1] [D]]
-  [? [== tag 3] [^ 0] [D]]
+  [? [== tag 3] [D
+      [! ast [@@ tokens [+ [* p 3] 1]]]
+      [! aln [@@ tokens [+ [* p 3] 2]]]
+      [? [is_numeric_atom src ast aln] [^ 0] [D]]
+      [! decls [@@$ ctx 2]]
+      [! dcount [@@ ctx 3]]
+      [! idx [decl_index src decls dcount ast aln]]
+      [? [< idx 0] [^ 0] [D]]
+      [! types [@@$ ctx 12]]
+      [^ [@@ types idx]]
+    ] [D]]
   [! op_tok [+ p 1]]
   [! hst [@@ tokens [+ [* op_tok 3] 1]]]
   [! hln [@@ tokens [+ [* op_tok 3] 2]]]
@@ -515,7 +524,8 @@
   [! tag [@@ tokens [* s 3]]]
   [? [== tag 4] [D
       [! n [new_strlabel_num ctx]]
-      [K h "    leaq    aicstr_"] [K h [N n]] [K h "(%rip), %rax\n"]
+      [! ntxt [N n]]
+      [K h "    leaq    aicstr_"] [K h ntxt] [K h "(%rip), %rax\n"]
     ] [? [== tag 3] [D
       [! ast [@@ tokens [+ [* s 3] 1]]]
       [! aln [@@ tokens [+ [* s 3] 2]]]
@@ -795,9 +805,11 @@
 
 // build ctx = {handle, label_n, decls_ptr, decl_count, funcs_ptr,
 // fn_param_count_ptr, func_count, epilogue_label_ptr, str_label_n,
-// fn_ret_is_str_ptr}
+// fn_ret_is_str_ptr, current_func_index, str_token_table, type_table}
 [! outh [O "stage8b_out.s" "w"]]
-[! ctx [H 96]]
+[! str_tokens [H [* [+ tok_count 1] 8]]]
+[! type_table [H [* [+ decl_count 1] 8]]]
+[! ctx [H 104]]
 [@@! ctx 0 outh]
 [@@! ctx 1 0]
 [@@$! ctx 2 decls]
@@ -808,6 +820,9 @@
 [@@$! ctx 7 ".Lret_test"]
 [@@! ctx 8 0]
 [@@$! ctx 9 fn_ret_is_str]
+[@@! ctx 10 -1]
+[@@$! ctx 11 str_tokens]
+[@@$! ctx 12 type_table]
 
 // walk each of main's own top-level statements and emit it - any
 // statement kind now, not just '!' (that restriction was Stage 7's,

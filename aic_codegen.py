@@ -114,9 +114,9 @@ _WORD_PTR_OPS = {"@@$", "@@$!"}    # pointer-typed word slots - same bits as
                                     # a symbol table) without laundering
                                     # every pointer through '@@' as INT and
                                     # losing the ability to '@'/'L' it again
-_LIBC_OPS = {"O": 2, "Z": 1, "R": 2, "K": 2, "X": 1,               # calls libc
-             "H": 1, "L": 1, "N": 1, "V": 1}
-_LIBC_STR_RETURN = {"H", "R", "N"}                                # the rest return INT
+_LIBC_OPS = {"O": 2, "Z": 1, "R": 2, "K": 2, "X": 1,               # calls libc/runtime
+             "H": 1, "L": 1, "N": 1, "V": 1, "A": 1}
+_LIBC_STR_RETURN = {"H", "R", "N", "A"}                           # the rest return INT
 _RESERVED_NAMES = (_STMT_OPS | _CMP_OP_NAMES | set(_BYTE_OPS) | set(_WORD_OPS)
                     | set(_LIBC_OPS) | {"^", "§"})
 _ARG_REGS = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
@@ -486,6 +486,11 @@ class Analyzer:
                     f"Line {_line_of(node[0])}: '{op}' takes {expected} "
                     f"argument(s), got {len(node) - 1}"
                 )
+            if op == "A":
+                t = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                if t != INT:
+                    raise CodegenError(f"Line {_line_of(node[0])}: 'A' takes a numeric argv index")
+                return STR
             if op == "O":
                 path_t = self.check_reads(node[1], declared, types, ctx_name, allow_return)
                 if path_t != STR:
@@ -861,7 +866,7 @@ class Codegen:
             self.emit("    movq    %rax, %rdi")
             mode_label = self.string_label({"r": "rb", "w": "wb", "a": "ab"}[node[2].val])
             self.emit(f"    leaq    {mode_label}(%rip), %rsi")
-            self.emit("    call    fopen@PLT")
+            self.emit("    call    aic_fopen")
             ok = self.new_label("openok")
             self.emit("    testq   %rax, %rax")
             self.emit(f"    jne     {ok}")
@@ -873,19 +878,19 @@ class Codegen:
             self.compile_expr(node[1])                        # %rax = FILE*
             self.emit("    movq    %rax, %r12")                # handle
             self.emit("    movq    %r12, %rdi")
-            self.emit("    call    ftell@PLT")                 # original pos
+            self.emit("    call    aic_ftell")                 # original pos
             self.emit("    movq    %rax, %r13")
             self.emit("    movq    %r12, %rdi")
             self.emit("    movq    $0, %rsi")
             self.emit("    movq    $2, %rdx")                  # SEEK_END
-            self.emit("    call    fseek@PLT")
+            self.emit("    call    aic_fseek")
             self.emit("    movq    %r12, %rdi")
-            self.emit("    call    ftell@PLT")                 # size
+            self.emit("    call    aic_ftell")                 # size
             self.emit("    movq    %rax, %r14")
             self.emit("    movq    %r12, %rdi")
             self.emit("    movq    %r13, %rsi")
             self.emit("    movq    $0, %rdx")                  # SEEK_SET
-            self.emit("    call    fseek@PLT")                 # restore position
+            self.emit("    call    aic_fseek")                 # restore position
             self.emit("    movq    %r14, %rax")
 
         elif op == "R":
@@ -894,7 +899,7 @@ class Codegen:
             self.compile_expr(node[2])                         # %rax = count
             self.emit("    movq    %rax, %r13")
             self.emit("    leaq    1(%r13), %rdi")              # malloc(count+1)
-            self.emit("    call    malloc@PLT")
+            self.emit("    call    aic_malloc")
             ok = self.new_label("allocok")
             self.emit("    testq   %rax, %rax")
             self.emit(f"    jne     {ok}")
@@ -905,7 +910,7 @@ class Codegen:
             self.emit("    movq    $1, %rsi")                   # element size
             self.emit("    movq    %r13, %rdx")                 # nmemb = count
             self.emit("    movq    %r12, %rcx")                 # stream
-            self.emit("    call    fread@PLT")                  # %rax = bytes actually read
+            self.emit("    call    aic_fread")                  # %rax = bytes actually read
             self.emit("    movb    $0, (%r14,%rax)")             # NUL-terminate
             self.emit("    movq    %r14, %rax")
             self.needs_runtime_guard = True
@@ -916,24 +921,24 @@ class Codegen:
             self.compile_expr(node[2])                         # %rax = data ptr
             self.emit("    movq    %rax, %r13")
             self.emit("    movq    %r13, %rdi")
-            self.emit("    call    strlen@PLT")
+            self.emit("    call    aic_strlen")
             self.emit("    movq    %rax, %r14")
             self.emit("    movq    %r13, %rdi")
             self.emit("    movq    $1, %rsi")
             self.emit("    movq    %r14, %rdx")
             self.emit("    movq    %r12, %rcx")
-            self.emit("    call    fwrite@PLT")
+            self.emit("    call    aic_fwrite")
 
         elif op == "X":
             self.compile_expr(node[1])
             self.emit("    movq    %rax, %rdi")
-            self.emit("    call    fclose@PLT")
+            self.emit("    call    aic_fclose")
 
         elif op == "H":
             self.compile_expr(node[1])                 # %rax = n
             self.emit("    leaq    1(%rax), %rdi")     # nmemb = n+1
             self.emit("    movq    $1, %rsi")          # size = 1 (zero-filled by calloc)
-            self.emit("    call    calloc@PLT")
+            self.emit("    call    aic_calloc")
             ok = self.new_label("allocok")
             self.emit("    testq   %rax, %rax")
             self.emit(f"    jne     {ok}")
@@ -944,13 +949,13 @@ class Codegen:
         elif op == "L":
             self.compile_expr(node[1])
             self.emit("    movq    %rax, %rdi")
-            self.emit("    call    strlen@PLT")
+            self.emit("    call    aic_strlen")
 
         elif op == "N":
             self.compile_expr(node[1])                 # %rax = value
             self.emit("    movq    %rax, %r12")
             self.emit("    movq    $24, %rdi")         # enough for a 64-bit decimal + sign + NUL
-            self.emit("    call    malloc@PLT")
+            self.emit("    call    aic_malloc")
             ok = self.new_label("allocok")
             self.emit("    testq   %rax, %rax")
             self.emit(f"    jne     {ok}")
@@ -961,7 +966,7 @@ class Codegen:
             self.emit("    leaq    fmt_d(%rip), %rsi")
             self.emit("    movq    %r12, %rdx")
             self.emit("    xorl    %eax, %eax")
-            self.emit("    call    sprintf@PLT")
+            self.emit("    call    aic_sprintf")
             self.emit("    movq    %r13, %rax")
             self.needs_runtime_guard = True
 
@@ -970,7 +975,12 @@ class Codegen:
             self.emit("    movq    %rax, %rdi")
             self.emit("    xorl    %esi, %esi")        # endptr = NULL
             self.emit("    movq    $10, %rdx")          # base 10
-            self.emit("    call    strtol@PLT")
+            self.emit("    call    aic_strtol")
+
+        if op == "A":
+            self.compile_expr(node[1])
+            self.emit("    movq    %rax, %rdi")
+            self.emit("    call    aic_arg")
 
     # --- statements ------------------------------------------------------------
     def compile_stmt(self, node):
@@ -984,7 +994,7 @@ class Codegen:
             if not args:
                 self.emit("    leaq    nl_only(%rip), %rdi")
                 self.emit("    xorl    %eax, %eax")
-                self.emit("    call    printf@PLT")
+                self.emit("    call    aic_printf")
                 return
             for i, a in enumerate(args):
                 self.compile_expr(a)
@@ -997,7 +1007,7 @@ class Codegen:
                 self.emit(f"    leaq    {fmt}(%rip), %rdi")
                 self.emit("    movq    %rax, %rsi")
                 self.emit("    xorl    %eax, %eax")
-                self.emit("    call    printf@PLT")
+                self.emit("    call    aic_printf")
         elif op == "!":
             self.compile_expr(node[2])
             self.emit(f"    movq    %rax, {self.slot_offset(node[1].name)}(%rbp)")
@@ -1059,8 +1069,8 @@ class Codegen:
         self.lines = []
         frame_size, zero_init = self._frame_and_zeroinit(main_slots, set())
         return f"""\
-    .globl main
-main:
+    .globl aic_main
+aic_main:
     pushq   %rbp
     movq    %rsp, %rbp
     subq    ${frame_size}, %rsp
@@ -1107,14 +1117,9 @@ main:
         if self.needs_divzero_guard:
             divzero_handler = """
 .Ldivzero:
-    movq    $1, %rax
-    movq    $2, %rdi
     leaq    divzero_msg(%rip), %rsi
-    movq    $divzero_len, %rdx
-    syscall
-    movq    $60, %rax
-    movq    $1, %rdi
-    syscall
+    movq    %rsi, %rdi
+    call    aic_runtime_error
 """
             rodata_divzero = """\
 divzero_msg:
@@ -1126,14 +1131,9 @@ divzero_msg_end:
         if self.needs_runtime_guard:
             runtime_handler = """
 .Lruntimeerror:
-    movq    $1, %rax
-    movq    $2, %rdi
     leaq    runtimeerr_msg(%rip), %rsi
-    movq    $runtimeerr_len, %rdx
-    syscall
-    movq    $60, %rax
-    movq    $1, %rdi
-    syscall
+    movq    %rsi, %rdi
+    call    aic_runtime_error
 """
             rodata_runtime = """\
 runtimeerr_msg:
@@ -1167,7 +1167,6 @@ nl_only:
 {fn_asm}
 {divzero_handler}
 {runtime_handler}
-    .section .note.GNU-stack,"",@progbits
 """
 
 
@@ -1183,7 +1182,7 @@ def compile_file(src_path, asm_path):
     main_stmts, main_slots, main_types = analyzer.analyze(program_nodes)
     cg = Codegen(analyzer.functions)
     asm = cg.build(main_stmts, main_slots, main_types)
-    with open(asm_path, "w", encoding="utf-8") as f:
+    with open(asm_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(asm)
     return asm
 
