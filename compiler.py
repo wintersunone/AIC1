@@ -489,6 +489,13 @@ def _op_fclose(node, env):
     f.close()
     return 0
 
+def _op_arg(node, env):
+    idx = to_int(eval_node(node[1], env))
+    argv = __import__('sys').argv
+    if 0 <= idx < len(argv):
+        return bytearray(argv[idx].encode("latin-1", errors="replace"))
+    return bytearray()
+
 
 # --- Heap: byte-addressable buffers ---------------------------------------
 
@@ -683,7 +690,7 @@ OPS = {
     "$": _op_index_get, "$!": _op_index_set, "L": _op_len, "C": _op_copy,
     ".": _op_print, "I": _op_input,
     "O": _op_open, "Z": _op_filesize, "R": _op_fread, "K": _op_fwrite, "X": _op_fclose,
-    "H": _op_heap_alloc, "@": _op_byteget, "@!": _op_byteset, "N": _op_itoa, "V": _op_atoi,
+    "H": _op_heap_alloc, "@": _op_byteget, "@!": _op_byteset, "N": _op_itoa, "V": _op_atoi, "A": _op_arg,
     "@@": _op_wordget, "@@!": _op_wordset,
     "@@$": _op_wordptrget, "@@$!": _op_wordptrset,
     "&&": _op_and, "||": _op_or,
@@ -693,7 +700,8 @@ for _sym, _fn in BIN_OPS.items():
 
 
 if __name__ == "__main__":
-    with open("code.aic", "r", encoding="utf-8") as f: src = f.read()
+    _path = __import__('sys').argv[1] if len(__import__('sys').argv) > 1 else "code.aic"
+    with open(_path, "r", encoding="utf-8") as f: src = f.read()
     try:
         tokens, lines = tokenize(src)
         global_scope = Scope()

@@ -81,9 +81,8 @@
 //              bridge, compiler_gen0_direct.exe compiled compiler.aic again
 //              and its output matched compiler_gen0.s byte-for-byte.
 //
-// Next: replace fixed code.aic/out.s paths with a native CLI or an AIC-level
-// path-selection primitive so the self-hosted compiler is ergonomic, not just
-// self-hosted.
+//   CLI path dispatch: accepts optional input and output paths via [A 1] and
+//              [A 2], falling back to "code.aic" and "out.s" when omitted.
 //
 // Helper functions written in AIC itself, not the compiler: is_section,
 // slice_str (real heap string-building: allocate + loop with @/@!),
@@ -108,7 +107,7 @@
 // Falls through to a streq scan against known function names only when no
 // built-in op matched - exactly the "elif op in self.functions" tier in
 // aic_codegen.py's own check_reads/compile_stmt chain.
-[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 -2]]]]]]]]]]]]]]]]]]
+[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 [? [== b 65] 23 -2]]]]]]]]]]]]]]]]]]]
 [§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 -2]]]]]
 [§ classify_op3 [b0 b1 b2] [^ [? [&& [== b0 64] [&& [== b1 64] [== b2 33]]] 10 [? [&& [== b0 64] [&& [== b1 64] [== b2 36]]] 11 -2]]]]
 [§ classify_op4 [b0 b1 b2 b3] [^ [? [&& [== b0 64] [&& [== b1 64] [&& [== b2 36] [== b3 33]]]] 12 -2]]]
@@ -436,7 +435,7 @@
   [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
   [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
   [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
-  [? [|| [== opcode 13] [|| [== opcode 15] [== opcode 19]]] [^ 1] [D]]
+  [? [|| [|| [== opcode 13] [== opcode 15]] [|| [== opcode 19] [== opcode 23]]] [^ 1] [D]]
   [? [== opcode 3] [D
       [! cond [+ op_tok 1]]
       [! ce [next_child_end tokens match cond]]
@@ -580,6 +579,11 @@
       [emit_expr tokens match src arg1 ctx]
       [K h "    movq    %rax, %rdi\n"]
       [K h "    call    aic_fclose\n"]
+    ] [D]]
+  [? [== code 23] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_arg\n"]
     ] [D]]
   [^ 0]
 ]]
@@ -756,7 +760,7 @@
               [emit_byte_op tokens match src s ctx opcode]
               [? [|| [|| [== opcode 9] [== opcode 10]] [|| [== opcode 11] [== opcode 12]]]
                 [emit_word_op tokens match src s ctx opcode]
-                [? [&& [>= opcode 13] [<= opcode 21]]
+                [? [&& [>= opcode 13] [<= opcode 23]]
                   [emit_libc_op tokens match src s ctx opcode]
                   [D
                   [! bcode [binop_classify src hst hln]]
@@ -913,7 +917,7 @@
           [? [== opcode 4] [emit_while tokens match src s ctx]
             [? [== opcode 5] [emit_do tokens match src s ctx]
               [? [== opcode 1] [emit_print tokens match src s ctx]
-                [? [&& [>= opcode 7] [<= opcode 21]]
+                [? [&& [>= opcode 7] [<= opcode 23]]
                   [emit_expr tokens match src s ctx]
                   [D
                     [! found [resolve_func tokens src hst hln ctx]]
@@ -1157,7 +1161,14 @@
 ]]
 
 
-[! h [O "code.aic" "r"]]
+[! in_path [A 1]]
+[! in_len [L in_path]]
+[? [== in_len 0] [! in_path "code.aic"] [D]]
+[! out_path [A 2]]
+[! out_len [L out_path]]
+[? [== out_len 0] [! out_path "out.s"] [D]]
+
+[! h [O in_path "r"]]
 [! n [Z h]]
 [! src [R h n]]
 [! tokens [H [* [+ n 1] 24]]]
@@ -1306,13 +1317,13 @@
 // histogram by code. STMT_UNKNOWN(-1) must be 0 for a real program - any
 // nonzero there is either a malformed statement or a genuinely unhandled
 // symbol, both worth knowing about before codegen is attempted.
-[D [! hist [H [* 25 8]]] [! mi 0] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]] [! mi [+ mi 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]]]
+[D [! hist [H [* 26 8]]] [! mi 0] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]] [! mi [+ mi 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]] [. "STMT_A=" [@@ hist 25]]]
 
 // --- stage 6a driver: full-depth statement histogram ----------------------
 // Same buckets as stage 5's, plus index 0 for "structurally unrecognized /
 // could be a call, classify_op_only can't tell" (see comment above that
 // function) - stage 5's own top-level counts above are unaffected by this.
-[! hist2 [H [* 25 8]]]
+[! hist2 [H [* 26 8]]]
 [! mi 0]
 [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [recurse_stmt tokens match src mstart mend hist2] [! mi [+ mi 1]]]]
 [! fi 0]
@@ -1489,7 +1500,7 @@
 ]]
 [X cg_bodyh]
 
-[! cg_outh [O "out.s" "w"]]
+[! cg_outh [O out_path "w"]]
 [emit_rodata_prefix cg_outh]
 [emit_str_rodata cg_str_values [@@ cgctx 8] cg_outh]
 [? [@@ cgctx 13] [emit_rodata_divzero cg_outh] [D]]

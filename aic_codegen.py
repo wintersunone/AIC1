@@ -970,14 +970,14 @@ class Codegen:
             self.emit("    movq    %r13, %rax")
             self.needs_runtime_guard = True
 
-        else:  # "V"
+        elif op == "V":
             self.compile_expr(node[1])
             self.emit("    movq    %rax, %rdi")
             self.emit("    xorl    %esi, %esi")        # endptr = NULL
             self.emit("    movq    $10, %rdx")          # base 10
             self.emit("    call    aic_strtol")
 
-        if op == "A":
+        elif op == "A":
             self.compile_expr(node[1])
             self.emit("    movq    %rax, %rdi")
             self.emit("    call    aic_arg")

@@ -20,8 +20,8 @@ aicstr_2:
 
 
     .text
-    .globl main
-main:
+    .globl aic_main
+aic_main:
     pushq   %rbp
     movq    %rsp, %rbp
     subq    $32, %rsp
@@ -66,22 +66,22 @@ main:
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
-    call    printf@PLT
+    call    aic_printf
     leaq    aicstr_1(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
-    call    printf@PLT
+    call    aic_printf
     movq    -32(%rbp), %rax
     leaq    fmt_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
-    call    printf@PLT
+    call    aic_printf
     leaq    aicstr_2(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
-    call    printf@PLT
+    call    aic_printf
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -24(%rbp), %rax
@@ -91,10 +91,9 @@ main:
     leaq    fmt_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
-    call    printf@PLT
+    call    aic_printf
     movq    $0, %rax
     leave
     ret
 
 
-    .section .note.GNU-stack,"",@progbits
