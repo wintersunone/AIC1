@@ -216,9 +216,99 @@ def eval_node(node, env):
     op = op_node.name if isinstance(op_node, Symbol) else str(op_node)
 
     try:
+        if op == "/" and len(node) == 4:
+            s = to_raw(eval_node(node[1], env))
+            start = to_int(eval_node(node[2], env))
+            length = to_int(eval_node(node[3], env))
+            sub = s[start : start + length].encode("latin-1")
+            return bytearray(sub + b'\0')
+
+        rec_name = None
+        ctor_args = None
+        if op in _RECORD_REGISTRY:
+            rec_name = op
+            ctor_args = node[1:]
+        elif op.startswith("#") and op[1:] in _RECORD_REGISTRY:
+            rec_name = op[1:]
+            ctor_args = node[1:]
+        elif op == "#" and len(node) > 1 and str(node[1].name if isinstance(node[1], Symbol) else node[1]) in _RECORD_REGISTRY:
+            rec_name = str(node[1].name if isinstance(node[1], Symbol) else node[1])
+            ctor_args = node[2:]
+
+        if rec_name is not None:
+            size = _RECORD_REGISTRY[rec_name]["size"]
+            if len(ctor_args) != size:
+                raise AICError(f"Record constructor '{rec_name}' takes {size} arguments, got {len(ctor_args)}")
+            buf = bytearray(size * 8 + 1)
+            for i, arg in enumerate(ctor_args):
+                v = eval_node(arg, env)
+                if isinstance(v, (bytearray, str)):
+                    h = _register_pointer(v)
+                else:
+                    h = to_int(v) & _WORD_MASK
+                buf[i * 8 : i * 8 + 8] = h.to_bytes(8, byteorder="little", signed=False)
+            return buf
+
         handler = OPS.get(op)
         if handler is not None:
             return handler(node, env)
+
+        if op.startswith("@@!.") or op.startswith("@@$!."):
+            is_ptr = op.startswith("@@$!.")
+            spec = op[5:] if is_ptr else op[4:]
+            if spec in _RECORD_REGISTRY:
+                rec_size = _RECORD_REGISTRY[spec]["size"]
+                target = eval_node(node[1], env)
+                if not isinstance(target, bytearray):
+                    raise AICError(f"'{op}' needs a heap buffer as target")
+                if len(node) == rec_size + 3:
+                    idx = to_int(eval_node(node[2], env))
+                    base_w = idx * rec_size
+                    val_nodes = node[3:]
+                elif len(node) == rec_size + 2:
+                    base_w = 0
+                    val_nodes = node[2:]
+                else:
+                    raise AICError(f"Bulk record setter '{op}' takes {rec_size + 1} or {rec_size + 2} arguments, got {len(node) - 1}")
+                last_val = None
+                for i, vn in enumerate(val_nodes):
+                    v = eval_node(vn, env)
+                    last_val = v
+                    w_idx = base_w + i
+                    off = w_idx * 8
+                    if isinstance(v, (bytearray, str)):
+                        h = _register_pointer(v)
+                    else:
+                        h = to_int(v) & _WORD_MASK
+                    target[off : off + 8] = h.to_bytes(8, byteorder="little", signed=False)
+                return last_val
+
+            offset, size = _resolve_record_field(spec)
+            if len(node) == 4:
+                idx = to_int(eval_node(node[2], env))
+                w_idx = idx * size + offset
+                val_node = node[3]
+            elif len(node) == 3:
+                w_idx = offset
+                val_node = node[2]
+            else:
+                raise AICError(f"'{op}' expects 2 or 3 arguments")
+            fake_node = [Symbol("@@$!" if is_ptr else "@@!"), node[1], w_idx, val_node]
+            return _op_wordptrset(fake_node, env) if is_ptr else _op_wordset(fake_node, env)
+
+        if op.startswith("@@.") or op.startswith("@@$."):
+            is_ptr = op.startswith("@@$.")
+            spec = op[4:] if is_ptr else op[3:]
+            offset, size = _resolve_record_field(spec)
+            if len(node) == 3:
+                idx = to_int(eval_node(node[2], env))
+                w_idx = idx * size + offset
+            elif len(node) == 2:
+                w_idx = offset
+            else:
+                raise AICError(f"'{op}' expects 1 or 2 arguments")
+            fake_node = [Symbol("@@$" if is_ptr else "@@"), node[1], w_idx]
+            return _op_wordptrget(fake_node, env) if is_ptr else _op_wordget(fake_node, env)
 
         fn = env.get(op)
         if fn is not _MISSING and isinstance(fn, tuple):
@@ -241,8 +331,11 @@ def eval_node(node, env):
         raise
 
 
-# --- Op handlers -------------------------------------------------------
-def _op_T(node, env): return __import__('time').perf_counter()
+def _op_T(node, env): return int(__import__('time').perf_counter() * 1000)
+
+def _op_free(node, env):
+    eval_node(node[1], env)
+    return 0
 
 def _op_D(node, env):
     res = None
@@ -683,14 +776,75 @@ def _op_wordptrset(node, env):
     target[off:off + 8] = handle.to_bytes(8, byteorder="little", signed=False)
     return val
 
+_RECORD_REGISTRY = {}
+_FIELD_REGISTRY = {}
+
+def _op_record_def(node, env):
+    if len(node) < 3:
+        raise AICError("Line " + str(getattr(node, "line", "?")) + ": '::' needs a record name and at least one field")
+    rec_name = str(node[1].name if isinstance(node[1], Symbol) else node[1])
+    field_names = [str(f.name if isinstance(f, Symbol) else f) for f in node[2:]]
+    fields = {f: i for i, f in enumerate(field_names)}
+    size = len(field_names)
+    _RECORD_REGISTRY[rec_name] = {"fields": fields, "size": size}
+    for f, i in fields.items():
+        _FIELD_REGISTRY[f] = (rec_name, i, size)
+    env.set(f"{rec_name}.size", size)
+    env.set(f"{rec_name}.bytes", size * 8)
+    env.set(f"{rec_name}:size", size)
+    env.set(f"{rec_name}:bytes", size * 8)
+    return 0
+
+def _resolve_record_field(spec):
+    if ":" in spec:
+        rec, f = spec.split(":", 1)
+        if rec not in _RECORD_REGISTRY:
+            raise AICError(f"Unknown record '{rec}'")
+        if f not in _RECORD_REGISTRY[rec]["fields"]:
+            raise AICError(f"Record '{rec}' has no field '{f}'")
+        return _RECORD_REGISTRY[rec]["fields"][f], _RECORD_REGISTRY[rec]["size"]
+    elif "." in spec:
+        rec, f = spec.split(".", 1)
+        if rec not in _RECORD_REGISTRY:
+            raise AICError(f"Unknown record '{rec}'")
+        if f not in _RECORD_REGISTRY[rec]["fields"]:
+            raise AICError(f"Record '{rec}' has no field '{f}'")
+        return _RECORD_REGISTRY[rec]["fields"][f], _RECORD_REGISTRY[rec]["size"]
+    else:
+        if spec not in _FIELD_REGISTRY:
+            raise AICError(f"Unresolved record field '{spec}'")
+        _, offset, size = _FIELD_REGISTRY[spec]
+        return offset, size
+
+def _op_bounded_map(node, env):
+    if len(node) >= 4 and isinstance(node[2], list) and len(node[2]) == 1 and isinstance(node[2][0], Symbol):
+        start = 0
+        limit = to_int(eval_node(node[1], env))
+        var_name = node[2][0].name
+        body = node[3:]
+    elif len(node) >= 5 and isinstance(node[3], list) and len(node[3]) == 1 and isinstance(node[3][0], Symbol):
+        start = to_int(eval_node(node[1], env))
+        limit = to_int(eval_node(node[2], env))
+        var_name = node[3][0].name
+        body = node[4:]
+    else:
+        raise AICError("Invalid '@>' bounded loop form: expected [@> count [var] ...] or [@> start count [var] ...]")
+
+    for i in range(start, limit):
+        env.set(var_name, i)
+        for stmt in body:
+            eval_node(stmt, env)
+    return 0
+
 
 OPS = {
-    "T": _op_T, "D": _op_D, "§": _op_define, "!": _op_assign, "^": _op_return,
-    "?": _op_if, "W": _op_while, "#": _op_list, "M": _op_map,
+    "T": _op_T, "D": _op_D, "§": _op_define, ":": _op_define, "::": _op_record_def, "!": _op_assign, "^": _op_return,
+    "?": _op_if, "W": _op_while, "@>": _op_bounded_map, "#": _op_list, "M": _op_map,
     "$": _op_index_get, "$!": _op_index_set, "L": _op_len, "C": _op_copy,
     ".": _op_print, "I": _op_input,
     "O": _op_open, "Z": _op_filesize, "R": _op_fread, "K": _op_fwrite, "X": _op_fclose,
     "H": _op_heap_alloc, "@": _op_byteget, "@!": _op_byteset, "N": _op_itoa, "V": _op_atoi, "A": _op_arg,
+    "F": _op_free,
     "@@": _op_wordget, "@@!": _op_wordset,
     "@@$": _op_wordptrget, "@@$!": _op_wordptrset,
     "&&": _op_and, "||": _op_or,

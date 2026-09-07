@@ -167,6 +167,40 @@ aic_sprintf:
     addq    $40, %rsp
     ret
 
+    .globl aic_input
+aic_input:
+    subq    $40, %rsp
+    movq    %rdi, %rdx
+    leaq    aic_win_fmt_err(%rip), %rcx
+    call    printf
+    movq    $0, %rcx
+    call    fflush
+    movq    $64, %rcx
+    call    malloc
+    movq    %rax, %rdx
+    movq    %rax, 32(%rsp)
+    leaq    aic_win_fmt_err(%rip), %rcx
+    call    scanf
+    movq    32(%rsp), %rax
+    addq    $40, %rsp
+    ret
+
+    .globl aic_free
+aic_free:
+    subq    $40, %rsp
+    movq    %rdi, %rcx
+    call    free
+    xorl    %eax, %eax
+    addq    $40, %rsp
+    ret
+
+    .globl aic_time
+aic_time:
+    subq    $40, %rsp
+    call    clock
+    addq    $40, %rsp
+    ret
+
     .globl aic_runtime_error
 aic_runtime_error:
     subq    $40, %rsp

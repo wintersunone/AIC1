@@ -94,6 +94,7 @@
 #           (confirmed: `[add 3]` against a 2-param `add` prints "3b").
 #   Pass 3 (codegen): emit x86-64 for main, then for each function.
 
+import os
 from compiler import tokenize, parse, AICError, Symbol, StrLit
 
 _CMP_SETcc = {
@@ -103,7 +104,7 @@ _CMP_SETcc = {
 _CMP_OP_NAMES = set(_CMP_SETcc) | {
     "+", "-", "*", "/", "%", "&", "|", "^^", "<<", ">>", "&&", "||",
 }
-_STMT_OPS = {".", "!", "?", "W", "D"}
+_STMT_OPS = {".", "!", "?", "W", "D", "@>"}
 _FILE_MODES = {"r", "w", "a"}
 _BYTE_OPS = {"@": 2, "@!": 3}                                     # no libc call
 _WORD_OPS = {"@@": 2, "@@!": 3, "@@$": 2, "@@$!": 3}              # no libc call
@@ -118,7 +119,7 @@ _LIBC_OPS = {"O": 2, "Z": 1, "R": 2, "K": 2, "X": 1,               # calls libc/
              "H": 1, "L": 1, "N": 1, "V": 1, "A": 1}
 _LIBC_STR_RETURN = {"H", "R", "N", "A"}                           # the rest return INT
 _RESERVED_NAMES = (_STMT_OPS | _CMP_OP_NAMES | set(_BYTE_OPS) | set(_WORD_OPS)
-                    | set(_LIBC_OPS) | {"^", "§"})
+                    | set(_LIBC_OPS) | {"^", "§", ":"})
 _ARG_REGS = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
 _MAX_PARAMS = len(_ARG_REGS)
 
@@ -139,6 +140,18 @@ def _op_name(node0):
 
 def _is_form(node, op):
     return isinstance(node, list) and node and _op_name(node[0]) == op
+
+
+def _is_fn_def(node):
+    return isinstance(node, list) and node and _op_name(node[0]) in ("§", ":")
+
+
+def _is_record_def(node):
+    return isinstance(node, list) and node and _op_name(node[0]) == "::"
+
+
+def _is_record_op(op):
+    return op.startswith("@@.") or op.startswith("@@!.") or op.startswith("@@$.") or op.startswith("@@$!.")
 
 
 def _kind(t):
@@ -165,16 +178,60 @@ class Analyzer:
     def __init__(self):
         self.declared = set()     # main-level variables ever assigned
         self.functions = {}       # name -> FnInfo
+        self.records = {}         # rec_name -> {"fields": {name: offset}, "size": size}
+        self.field_map = {}       # field_name -> (rec_name, offset, size)
+        self.constants = {}       # const_name -> int_value
 
     # ---- registration -----------------------------------------------------
     def register(self, program_nodes):
         main_stmts = []
         for n in program_nodes:
-            if _is_form(n, "§"):
+            if _is_fn_def(n):
                 self._register_function(n)
+            elif _is_record_def(n):
+                self._register_record(n)
             else:
                 main_stmts.append(n)
         return main_stmts
+
+    def _register_record(self, node):
+        if len(node) < 3:
+            raise CodegenError(
+                f"Line {_line_of(node[0])}: '::' needs a record name and at least one field"
+            )
+        rec_name = _op_name(node[1])
+        field_names = [_op_name(f) for f in node[2:]]
+        fields = {f: i for i, f in enumerate(field_names)}
+        size = len(field_names)
+        self.records[rec_name] = {"fields": fields, "size": size}
+        for f, i in fields.items():
+            self.field_map[f] = (rec_name, i, size)
+        self.constants[f"{rec_name}.size"] = size
+        self.constants[f"{rec_name}.bytes"] = size * 8
+        self.constants[f"{rec_name}:size"] = size
+        self.constants[f"{rec_name}:bytes"] = size * 8
+
+    def _resolve_record_field(self, spec):
+        if ":" in spec:
+            rec, f = spec.split(":", 1)
+            if rec not in self.records:
+                raise CodegenError(f"Unknown record '{rec}'")
+            if f not in self.records[rec]["fields"]:
+                raise CodegenError(f"Record '{rec}' has no field '{f}'")
+            return self.records[rec]["fields"][f], self.records[rec]["size"]
+        elif "." in spec:
+            rec, f = spec.split(".", 1)
+            if rec not in self.records:
+                raise CodegenError(f"Unknown record '{rec}'")
+            if f not in self.records[rec]["fields"]:
+                raise CodegenError(f"Record '{rec}' has no field '{f}'")
+            return self.records[rec]["fields"][f], self.records[rec]["size"]
+        else:
+            if spec not in self.field_map:
+                raise CodegenError(f"Unresolved record field '{spec}'")
+            _, offset, size = self.field_map[spec]
+            return offset, size
+
 
     def _parse_name_decl(self, node_part, node, what):
         """A plain Symbol declares a number; '[$ name]' declares a
@@ -236,7 +293,7 @@ class Analyzer:
 
     # ---- declaration collection (per-scope) --------------------------------
     def collect_declarations(self, node, target_set, ctx_name):
-        if _is_form(node, "§"):
+        if _is_fn_def(node):
             raise CodegenError(
                 f"Line {_line_of(node[0])}: {self._nested_define_msg(ctx_name)}"
             )
@@ -246,6 +303,11 @@ class Analyzer:
             if len(node) < 3 or not isinstance(node[1], Symbol):
                 raise CodegenError(f"Line {_line_of(node[0])}: '!' needs a variable name and a value")
             target_set.add(node[1].name)
+        if isinstance(node[0], Symbol) and node[0].name == "@>":
+            if len(node) >= 4 and isinstance(node[2], list) and len(node[2]) == 1 and isinstance(node[2][0], Symbol):
+                target_set.add(node[2][0].name)
+            elif len(node) >= 5 and isinstance(node[3], list) and len(node[3]) == 1 and isinstance(node[3][0], Symbol):
+                target_set.add(node[3][0].name)
         for child in node:
             self.collect_declarations(child, target_set, ctx_name)
 
@@ -279,7 +341,9 @@ class Analyzer:
             if in_op_position:
                 if (node.name in _STMT_OPS or node.name in _CMP_OP_NAMES
                         or node.name in _BYTE_OPS or node.name in _WORD_OPS
-                        or node.name in _LIBC_OPS):
+                        or node.name in _LIBC_OPS or _is_record_op(node.name)
+                        or node.name in self.records or (node.name.startswith("#") and node.name[1:] in self.records)
+                        or node.name == "#"):
                     return None
                 if node.name == "^":
                     if not allow_return:
@@ -288,7 +352,7 @@ class Analyzer:
                             f"sense inside a function body"
                         )
                     return None
-                if node.name == "§":
+                if node.name in ("§", ":"):
                     return None
                 if node.name in self.functions:
                     return None
@@ -296,6 +360,8 @@ class Analyzer:
                     f"Line {_line_of(node)}: op '{node.name}' has no native "
                     f"codegen support yet in this slice"
                 )
+            if node.name in self.constants:
+                return INT
             if node.name not in declared:
                 where = f"function '{ctx_name}'" if ctx_name else "this program"
                 extra = (f" (only its own parameters/locals are visible - "
@@ -361,6 +427,22 @@ class Analyzer:
             self.check_reads(node[1], declared, types, ctx_name, allow_return, top=True)
             for stmt in node[2:]:
                 self.check_reads(stmt, declared, types, ctx_name, allow_return, top=True)
+            return INT
+
+        elif op == "@>":
+            if len(node) >= 4 and isinstance(node[2], list) and len(node[2]) == 1 and isinstance(node[2][0], Symbol):
+                self.check_reads(node[1], declared, types, ctx_name, allow_return, top=True)
+                types[node[2][0].name] = INT
+                for stmt in node[3:]:
+                    self.check_reads(stmt, declared, types, ctx_name, allow_return, top=True)
+            elif len(node) >= 5 and isinstance(node[3], list) and len(node[3]) == 1 and isinstance(node[3][0], Symbol):
+                self.check_reads(node[1], declared, types, ctx_name, allow_return, top=True)
+                self.check_reads(node[2], declared, types, ctx_name, allow_return, top=True)
+                types[node[3][0].name] = INT
+                for stmt in node[4:]:
+                    self.check_reads(stmt, declared, types, ctx_name, allow_return, top=True)
+            else:
+                raise CodegenError(f"Line {_line_of(node[0])}: Invalid '@>' form")
             return INT
 
         elif op in (".", "D"):
@@ -466,6 +548,67 @@ class Analyzer:
                     raise CodegenError(f"Line {_line_of(node[0])}: '@@$!'s value argument must be a string/buffer pointer - use '@@!' to store a plain number")
                 return STR
 
+        elif _is_record_op(op):
+            is_set = op.startswith("@@!.") or op.startswith("@@$!.")
+            is_ptr = op.startswith("@@$.") or op.startswith("@@$!.")
+            if op.startswith("@@$!."): spec = op[5:]
+            elif op.startswith("@@!."): spec = op[4:]
+            elif op.startswith("@@$."): spec = op[4:]
+            else: spec = op[3:]
+
+            if is_set and spec in self.records:
+                rec_size = self.records[spec]["size"]
+                if len(node) == rec_size + 3:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    if t2 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s index argument must be a number")
+                    for val_n in node[3:]:
+                        self.check_reads(val_n, declared, types, ctx_name, allow_return)
+                    return INT
+                elif len(node) == rec_size + 2:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    for val_n in node[2:]:
+                        self.check_reads(val_n, declared, types, ctx_name, allow_return)
+                    return INT
+                else:
+                    raise CodegenError(f"Line {_line_of(node[0])}: Bulk record setter '{op}' takes {rec_size + 1} or {rec_size + 2} arguments, got {len(node) - 1}")
+
+            offset, size = self._resolve_record_field(spec)
+            if is_set:
+                if len(node) == 4:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
+                    t3 = self.check_reads(node[3], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    if t2 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s index argument must be a number")
+                    if is_ptr and t3 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s value argument must be a string/buffer pointer")
+                    if not is_ptr and t3 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s value argument must be a number")
+                    return t3
+                elif len(node) == 3:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    if is_ptr and t2 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s value argument must be a string/buffer pointer")
+                    if not is_ptr and t2 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s value argument must be a number")
+                    return t2
+                else:
+                    raise CodegenError(f"Line {_line_of(node[0])}: '{op}' takes 2 or 3 arguments")
+            else:
+                if len(node) == 3:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    if t2 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s index argument must be a number")
+                    return STR if is_ptr else INT
+                elif len(node) == 2:
+                    t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                    if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '{op}'s first argument must be a string/buffer")
+                    return STR if is_ptr else INT
+                else:
+                    raise CodegenError(f"Line {_line_of(node[0])}: '{op}' takes 1 or 2 arguments")
+
         elif op in _LIBC_OPS:
             if not top:
                 raise CodegenError(
@@ -551,6 +694,33 @@ class Analyzer:
                     raise CodegenError(f"Line {_line_of(node[0])}: 'V' takes a string to parse as a number")
                 return INT
 
+        elif op == "/" and len(node) == 4:
+            t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+            t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
+            t3 = self.check_reads(node[3], declared, types, ctx_name, allow_return)
+            if t1 != STR: raise CodegenError(f"Line {_line_of(node[0])}: '/' slice first argument must be a string/buffer")
+            if t2 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '/' slice start index must be a number")
+            if t3 != INT: raise CodegenError(f"Line {_line_of(node[0])}: '/' slice length must be a number")
+            return STR
+
+        elif op in self.records or (op.startswith("#") and op[1:] in self.records):
+            rec_name = op if op in self.records else op[1:]
+            size = self.records[rec_name]["size"]
+            if len(node) - 1 != size:
+                raise CodegenError(f"Line {_line_of(node[0])}: Record constructor '{op}' takes {size} arguments, got {len(node) - 1}")
+            for child in node[1:]:
+                self.check_reads(child, declared, types, ctx_name, allow_return)
+            return STR
+
+        elif op == "#" and len(node) > 1 and _op_name(node[1]) in self.records:
+            rec_name = _op_name(node[1])
+            size = self.records[rec_name]["size"]
+            if len(node) - 2 != size:
+                raise CodegenError(f"Line {_line_of(node[0])}: Record constructor '[# {rec_name}]' takes {size} arguments, got {len(node) - 2}")
+            for child in node[2:]:
+                self.check_reads(child, declared, types, ctx_name, allow_return)
+            return STR
+
         elif op in _CMP_OP_NAMES:
             if len(node) != 3:
                 raise CodegenError(
@@ -588,7 +758,7 @@ class Analyzer:
 
         main_types = {}
         for n in main_stmts:
-            self.check_reads(n, self.declared, main_types, None, allow_return=False, top=True)
+            self.check_reads(n, self.declared, main_types, None, allow_return=True, top=True)
         for fn in self.functions.values():
             fn.types = dict(zip(fn.params, fn.param_types))   # seeded from the signature
             for stmt in fn.body_stmts:
@@ -609,12 +779,14 @@ class Analyzer:
 
 # --- Pass 3: codegen -------------------------------------------------------
 class Codegen:
-    def __init__(self, functions):
+    def __init__(self, functions, analyzer=None):
         self.lines = []
         self.label_n = 0
         self.needs_divzero_guard = False
         self.needs_runtime_guard = False   # calloc/malloc/fopen failure trampoline
         self.functions = functions
+        self.analyzer = analyzer
+        self.constants = analyzer.constants if analyzer else {}
         self.slots = {}          # active scope's name -> slot index
         self.types = {}          # active scope's name -> "int"/"str"
         self.epilogue = None     # active function's epilogue label, or None in main
@@ -667,9 +839,24 @@ class Codegen:
                 return self.functions[op].ret_type
             if op in _LIBC_STR_RETURN:
                 return STR
+            if _is_record_op(op):
+                is_ptr = op.startswith("@@$.") or op.startswith("@@$!.")
+                return STR if is_ptr else INT
             if op == "?":
                 return self._static_type(node[2])
         return INT
+
+    def _is_int_const(self, node):
+        if isinstance(node, int): return True
+        if isinstance(node, Symbol) and hasattr(self, "constants") and node.name in self.constants:
+            return True
+        return False
+
+    def _get_int_const(self, node):
+        if isinstance(node, int): return node
+        if isinstance(node, Symbol) and hasattr(self, "constants") and node.name in self.constants:
+            return self.constants[node.name]
+        return None
 
     # --- expressions: result always ends up in %rax -------------------------
     def compile_expr(self, node):
@@ -681,6 +868,9 @@ class Codegen:
             self.emit(f"    leaq    {label}(%rip), %rax")
             return
         if isinstance(node, Symbol):
+            if hasattr(self, "constants") and node.name in self.constants:
+                self.emit(f"    movq    ${self.constants[node.name]}, %rax")
+                return
             off = self.slot_offset(node.name)
             self.emit(f"    movq    {off}(%rbp), %rax")
             return
@@ -774,12 +964,69 @@ class Codegen:
             self.compile_libc_op(op, node)
             return
 
+        if _is_record_op(op):
+            self.compile_record_op(op, node)
+            return
+
+        if op == "/" and len(node) == 4:
+            self.compile_slice(node)
+            return
+
+        rec_name = None
+        ctor_args = None
+        if op in self.analyzer.records:
+            rec_name = op
+            ctor_args = node[1:]
+        elif op.startswith("#") and op[1:] in self.analyzer.records:
+            rec_name = op[1:]
+            ctor_args = node[1:]
+        elif op == "#" and len(node) > 1 and _op_name(node[1]) in self.analyzer.records:
+            rec_name = _op_name(node[1])
+            ctor_args = node[2:]
+        if rec_name is not None:
+            self.compile_record_construct(rec_name, ctor_args)
+            return
+
         if len(node) != 3:
             raise CodegenError(
                 f"Line {_line_of(op_node)}: codegen only supports binary "
                 f"'{op}' (exactly 2 operands), got {len(node) - 1}"
             )
         left, right = node[1], node[2]
+
+        if self._is_int_const(left) and self._is_int_const(right):
+            lval = self._get_int_const(left)
+            rval = self._get_int_const(right)
+            folded = None
+            if op == "+":
+                folded = lval + rval
+            elif op == "-":
+                folded = lval - rval
+            elif op == "*":
+                folded = lval * rval
+            elif op == "/":
+                if rval != 0:
+                    folded = int(lval / rval)
+            elif op == "%":
+                if rval != 0:
+                    folded = lval - int(lval / rval) * rval
+            elif op == "&":
+                folded = lval & rval
+            elif op == "|":
+                folded = lval | rval
+            elif op == "^^":
+                folded = lval ^ rval
+            elif op == "<<":
+                if 0 <= rval < 64:
+                    folded = lval << rval
+            elif op == ">>":
+                if 0 <= rval < 64:
+                    folded = lval >> rval
+            if folded is not None:
+                folded = (folded + (1 << 63)) % (1 << 64) - (1 << 63)
+                self.emit(f"    movq    ${folded}, %rax")
+                return
+
         self.compile_expr(left)
         self.emit("    pushq   %rax")
         self.compile_expr(right)
@@ -856,6 +1103,151 @@ class Codegen:
             self.emit("    popq    %rbx")                                # word index
             self.emit("    popq    %rcx")                                # ptr
             self.emit("    movq    %rax, (%rcx,%rbx,8)")
+
+    def compile_record_op(self, op, node):
+        is_set = op.startswith("@@!.") or op.startswith("@@$!.")
+        if op.startswith("@@$!."): spec = op[5:]
+        elif op.startswith("@@!."): spec = op[4:]
+        elif op.startswith("@@$."): spec = op[4:]
+        else: spec = op[3:]
+
+        if is_set and spec in self.analyzer.records:
+            rec_size = self.analyzer.records[spec]["size"]
+            if len(node) == rec_size + 3:
+                val_nodes = node[3:]
+                for v in val_nodes:
+                    self.compile_expr(v)
+                    self.emit("    pushq   %rax")
+                self.compile_expr(node[1])
+                self.emit("    pushq   %rax")
+                self.compile_expr(node[2])
+                self.emit("    popq    %rbx")
+                if rec_size > 1:
+                    self.emit(f"    imulq   ${rec_size * 8}, %rax")
+                else:
+                    self.emit("    shlq    $3, %rax")
+                self.emit("    addq    %rbx, %rax")
+                for i in range(rec_size - 1, -1, -1):
+                    self.emit("    popq    %rbx")
+                    self.emit(f"    movq    %rbx, {i * 8}(%rax)")
+                return
+            elif len(node) == rec_size + 2:
+                val_nodes = node[2:]
+                for v in val_nodes:
+                    self.compile_expr(v)
+                    self.emit("    pushq   %rax")
+                self.compile_expr(node[1])
+                for i in range(rec_size - 1, -1, -1):
+                    self.emit("    popq    %rbx")
+                    self.emit(f"    movq    %rbx, {i * 8}(%rax)")
+                return
+            else:
+                raise CodegenError(f"Line {_line_of(node[0])}: Bulk record setter '{op}' takes {rec_size + 1} or {rec_size + 2} arguments, got {len(node) - 1}")
+
+        offset, size = self.analyzer._resolve_record_field(spec)
+
+        if not is_set:
+            if len(node) == 3:
+                idx_node = node[2]
+                if self._is_int_const(idx_node):
+                    c_idx = self._get_int_const(idx_node)
+                    disp = (c_idx * size + offset) * 8
+                    self.compile_expr(node[1])
+                    self.emit(f"    movq    {disp}(%rax), %rax")
+                else:
+                    self.compile_expr(node[1])
+                    self.emit("    pushq   %rax")
+                    self.compile_expr(idx_node)
+                    self.emit("    popq    %rbx")
+                    if size > 1:
+                        self.emit(f"    imulq   ${size * 8}, %rax")
+                        self.emit(f"    movq    {offset * 8}(%rbx,%rax), %rax")
+                    else:
+                        self.emit(f"    movq    {offset * 8}(%rbx,%rax,8), %rax")
+            elif len(node) == 2:
+                self.compile_expr(node[1])
+                self.emit(f"    movq    {offset * 8}(%rax), %rax")
+            else:
+                raise CodegenError(f"Line {_line_of(node[0])}: '{op}' takes 1 or 2 arguments")
+        else:
+            if len(node) == 4:
+                idx_node = node[2]
+                val_node = node[3]
+                if self._is_int_const(idx_node):
+                    c_idx = self._get_int_const(idx_node)
+                    disp = (c_idx * size + offset) * 8
+                    self.compile_expr(node[1])
+                    self.emit("    pushq   %rax")
+                    self.compile_expr(val_node)
+                    self.emit("    popq    %rbx")
+                    self.emit(f"    movq    %rax, {disp}(%rbx)")
+                else:
+                    self.compile_expr(node[1])
+                    self.emit("    pushq   %rax")
+                    self.compile_expr(idx_node)
+                    if size > 1:
+                        self.emit(f"    imulq   ${size * 8}, %rax")
+                    else:
+                        self.emit("    shlq    $3, %rax")
+                    self.emit("    pushq   %rax")
+                    self.compile_expr(val_node)
+                    self.emit("    popq    %rcx")
+                    self.emit("    popq    %rbx")
+                    self.emit(f"    movq    %rax, {offset * 8}(%rbx,%rcx)")
+            elif len(node) == 3:
+                val_node = node[2]
+                self.compile_expr(node[1])
+                self.emit("    pushq   %rax")
+                self.compile_expr(val_node)
+                self.emit("    popq    %rbx")
+                self.emit(f"    movq    %rax, {offset * 8}(%rbx)")
+            else:
+                raise CodegenError(f"Line {_line_of(node[0])}: '{op}' takes 2 or 3 arguments")
+
+    def compile_record_construct(self, rec_name, args):
+        size = self.analyzer.records[rec_name]["size"]
+        for arg in args:
+            self.compile_expr(arg)
+            self.emit("    pushq   %rax")
+        self.emit(f"    movq    ${size * 8 + 1}, %rdi")
+        self.emit("    movq    $1, %rsi")
+        self.emit("    call    aic_calloc")
+        self.needs_io_guard = True
+        ok = self.new_label("allocok")
+        self.emit("    testq   %rax, %rax")
+        self.emit(f"    jne     {ok}")
+        self.emit("    jmp     .Lruntimeerror")
+        self.emit(f"{ok}:")
+        for i in range(size - 1, -1, -1):
+            self.emit("    popq    %rbx")
+            self.emit(f"    movq    %rbx, {i * 8}(%rax)")
+
+    def compile_slice(self, node):
+        self.compile_expr(node[1])
+        self.emit("    pushq   %rax")
+        self.compile_expr(node[2])
+        self.emit("    pushq   %rax")
+        self.compile_expr(node[3])
+        self.emit("    pushq   %rax")
+        self.emit("    movq    %rax, %rdi")
+        self.emit("    incq    %rdi")
+        self.emit("    movq    $1, %rsi")
+        self.emit("    call    aic_calloc")
+        self.needs_io_guard = True
+        ok = self.new_label("allocok")
+        self.emit("    testq   %rax, %rax")
+        self.emit(f"    jne     {ok}")
+        self.emit("    jmp     .Lruntimeerror")
+        self.emit(f"{ok}:")
+        self.emit("    popq    %rcx")
+        self.emit("    popq    %rbx")
+        self.emit("    popq    %rsi")
+        self.emit("    addq    %rbx, %rsi")
+        self.emit("    movq    %rax, %rdi")
+        self.emit("    pushq   %rax")
+        self.emit("    rep movsb")
+        self.emit("    popq    %rax")
+
 
     # --- C-runtime calls: uses %r12/%r13/%r14 (callee-saved per the SysV
     # ABI) as scratch across calls, so libc can't clobber them and no
@@ -1035,10 +1427,45 @@ class Codegen:
                 self.compile_stmt(stmt)
             self.emit(f"    jmp     {top_l}")
             self.emit(f"{end_l}:")
+        elif op == "@>":
+            top_l, end_l = self.new_label("maptop"), self.new_label("mapend")
+            if len(node) >= 4 and isinstance(node[2], list) and len(node[2]) == 1 and isinstance(node[2][0], Symbol):
+                limit_node = node[1]
+                var_name = node[2][0].name
+                body = node[3:]
+                start_node = 0
+            else:
+                start_node = node[1]
+                limit_node = node[2]
+                var_name = node[3][0].name
+                body = node[4:]
+
+            var_off = self.slot_offset(var_name)
+            if isinstance(start_node, int):
+                self.emit(f"    movq    ${start_node}, {var_off}(%rbp)")
+            else:
+                self.compile_expr(start_node)
+                self.emit(f"    movq    %rax, {var_off}(%rbp)")
+
+            self.emit(f"{top_l}:")
+            self.emit(f"    movq    {var_off}(%rbp), %rax")
+            self.emit("    pushq   %rax")
+            self.compile_expr(limit_node)
+            self.emit("    movq    %rax, %rbx")
+            self.emit("    popq    %rax")
+            self.emit("    cmpq    %rbx, %rax")
+            self.emit(f"    jge     {end_l}")
+            for stmt in body:
+                self.compile_stmt(stmt)
+            self.emit(f"    incq    {var_off}(%rbp)")
+            self.emit(f"    jmp     {top_l}")
+            self.emit(f"{end_l}:")
         elif op == "D":
             for stmt in node[1:]:
                 self.compile_stmt(stmt)
-        elif op in _BYTE_OPS or op in _WORD_OPS or op in _LIBC_OPS:
+        elif (op in _BYTE_OPS or op in _WORD_OPS or op in _LIBC_OPS or _is_record_op(op)
+              or op in self.analyzer.records or (op.startswith("#") and op[1:] in self.analyzer.records)
+              or op == "#" or (op == "/" and len(node) == 4)):
             self.compile_expr(node)   # bare statement, result dropped
         elif op in self.functions:
             self.compile_expr(node)   # call used for side effects, result dropped
@@ -1062,7 +1489,7 @@ class Codegen:
     def compile_main(self, main_stmts, main_slots, main_types):
         self.slots = main_slots
         self.types = main_types
-        self.epilogue = None
+        self.epilogue = ".Lmain_ret"
         for n in main_stmts:
             self.compile_stmt(n)
         body = "\n".join(self.lines)
@@ -1077,6 +1504,7 @@ aic_main:
 {zero_init}
 {body}
     movq    $0, %rax
+.Lmain_ret:
     leave
     ret
 """
@@ -1123,7 +1551,7 @@ aic_main:
 """
             rodata_divzero = """\
 divzero_msg:
-    .string "AIC Runtime Error: Division by zero\\n"
+    .string "[ERR :code 502 :kind RUNTIME :msg DIVISION_BY_ZERO]\\n"
 divzero_msg_end:
     .equ divzero_len, divzero_msg_end - divzero_msg - 1
 """
@@ -1137,7 +1565,7 @@ divzero_msg_end:
 """
             rodata_runtime = """\
 runtimeerr_msg:
-    .string "AIC Runtime Error: a file or memory operation failed (open/allocate)\\n"
+    .string "[ERR :code 501 :kind RUNTIME :msg IO_OR_ALLOC_FAILED]\\n"
 runtimeerr_msg_end:
     .equ runtimeerr_len, runtimeerr_msg_end - runtimeerr_msg - 1
 """
@@ -1145,6 +1573,15 @@ runtimeerr_msg_end:
             f'{label}:\n    .string "{self._escape_asm_string(text)}"'
             for text, label in self.str_labels.items()
         )
+        bridge_asm = ""
+        bridge_file = os.path.join(os.path.dirname(__file__), "tools", "aic_wincrt_bridge.s")
+        if os.path.exists(bridge_file):
+            with open(bridge_file, "r", encoding="utf-8") as f:
+                bridge_asm = f.read()
+        elif os.path.exists("tools/aic_wincrt_bridge.s"):
+            with open("tools/aic_wincrt_bridge.s", "r", encoding="utf-8") as f:
+                bridge_asm = f.read()
+
         return f"""\
     .section .rodata
 fmt_nl:
@@ -1167,7 +1604,7 @@ nl_only:
 {fn_asm}
 {divzero_handler}
 {runtime_handler}
-"""
+{bridge_asm}"""
 
 
 def compile_file(src_path, asm_path):
@@ -1180,7 +1617,7 @@ def compile_file(src_path, asm_path):
 
     analyzer = Analyzer()
     main_stmts, main_slots, main_types = analyzer.analyze(program_nodes)
-    cg = Codegen(analyzer.functions)
+    cg = Codegen(analyzer.functions, analyzer)
     asm = cg.build(main_stmts, main_slots, main_types)
     with open(asm_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(asm)
@@ -1195,7 +1632,8 @@ if __name__ == "__main__":
         compile_file(src, out)
         print(f"wrote {out}")
     except (AICError, CodegenError) as e:
-        print(f"AIC Codegen Error: {e}", file=sys.stderr)
+        diag = getattr(e, "diagnostic", f"[ERR :code 400 :kind CODEGEN :msg {repr(str(e))}]")
+        print(diag, file=sys.stderr)
         sys.exit(1)
 
 # --- Why closures / generic lists are still separate, later steps ----------

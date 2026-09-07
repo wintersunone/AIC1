@@ -1,0 +1,34 @@
+[:: Token tag start len]
+
+// 1. Direct record constructor
+[! t1 [Token 10 20 30]]
+[. "Direct ctor:" [@@.Token:tag t1] [@@.Token:start t1] [@@.Token:len t1]]
+
+// 2. Hash-prefixed constructor
+[! t2 [#Token 40 50 60]]
+[. "Hash ctor:" [@@.Token:tag t2] [@@.Token:start t2] [@@.Token:len t2]]
+
+// 3. Spaced hash constructor
+[! t3 [# Token 70 80 90]]
+[. "Spaced ctor:" [@@.Token:tag t3] [@@.Token:start t3] [@@.Token:len t3]]
+
+// 4. Bulk record setter on array
+[! tokens [H [* 3 Token.bytes]]]
+[@@!.Token tokens 0 111 222 333]
+[@@!.Token tokens 1 444 555 666]
+[@@!.Token tokens 2 777 888 999]
+[. "Array bulk:" [@@.Token:tag tokens 1] [@@.Token:start tokens 1] [@@.Token:len tokens 1]]
+
+// 5. Bulk record setter on single pointer
+[! p [H Token.bytes]]
+[@@!.Token p 987 654 321]
+[. "Single bulk:" [@@.Token:tag p] [@@.Token:start p] [@@.Token:len p]]
+
+// 6. Native string slicing
+[! msg "Hello, Antigravity AI Compiler!"]
+[! s1 [/ msg 0 5]]
+[! s2 [/ msg 7 11]]
+[! s3 [/ msg 19 11]]
+[. "Slice 1:" s1]
+[. "Slice 2:" s2]
+[. "Slice 3:" s3]

@@ -1,0 +1,19 @@
+[:: Token tag start len]
+
+[! buf [H [* 10 Token.bytes]]]
+[@@!.Token:tag buf 0 101]
+[@@!.start buf 0 202]
+[@@!.len buf 0 303]
+[. [@@.Token:tag buf 0] [@@.start buf 0] [@@.len buf 0]]
+
+[! i 1]
+[@@!.tag buf i 404]
+[@@!.start buf i 505]
+[@@!.len buf i 606]
+[. [@@.tag buf i] [@@.start buf i] [@@.len buf i]]
+
+[. "size=" Token:size "bytes=" Token.bytes]
+
+[@> 3 [k]
+  [. "k=" k]
+]

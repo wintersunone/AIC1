@@ -88,10 +88,15 @@
 // slice_str (real heap string-building: allocate + loop with @/@!),
 // streq, decl_add (a dedup-on-insert array, itself just H + @@/@@!).
 
+[:: Token tag start len]
+[:: Func form_start name_tok params_open_tok form_end]
+[:: Main mstart mend]
+
 [§ is_space [b] [^ [|| [== b 32] [|| [== b 9] [|| [== b 10] [== b 13]]]]]]
 [§ is_atom_char [b] [^ [== [|| [is_space b] [|| [== b 91] [|| [== b 93] [== b 34]]]] 0]]]
-[§ write_token [[$ tokens] idx tag start len] [D [@@! tokens [* idx 3] tag] [@@! tokens [+ [* idx 3] 1] start] [@@! tokens [+ [* idx 3] 2] len] [^ idx]]]
-[§ is_section [[$ tokens] [$ src] t] [D [! tg [@@ tokens [* t 3]]] [! st [@@ tokens [+ [* t 3] 1]]] [! ln [@@ tokens [+ [* t 3] 2]]] [^ [&& [== tg 3] [&& [== ln 2] [&& [== [@ src st] 194] [== [@ src [+ st 1]] 167]]]]]]]
+[§ write_token [[$ tokens] idx tag start len] [D [@@!.Token:tag tokens idx tag] [@@!.Token:start tokens idx start] [@@!.Token:len tokens idx len] [^ idx]]]
+[§ is_section [[$ tokens] [$ src] t] [D [! tg [@@.Token:tag tokens t]] [! st [@@.Token:start tokens t]] [! ln [@@.Token:len tokens t]] [^ [&& [== tg 3] [|| [&& [== ln 1] [== [@ src st] 58]] [&& [== ln 2] [&& [== [@ src st] 194] [== [@ src [+ st 1]] 167]]]]]]]]
+[§ is_record_def [[$ tokens] [$ src] t] [D [! tg [@@.Token:tag tokens t]] [! st [@@.Token:start tokens t]] [! ln [@@.Token:len tokens t]] [^ [&& [== tg 3] [&& [== ln 2] [&& [== [@ src st] 58] [== [@ src [+ st 1]] 58]]]]]]]
 [§ [$ slice_str] [[$ src] start len] [D [! buf [H len]] [! k 0] [W [< k len] [@! buf k [@ src [+ start k]]] [! k [+ k 1]]] [^ buf]]]
 [§ streq [[$ src] s1 l1 s2 l2] [D [! ok 1] [? [!= l1 l2] [! ok 0] [D]] [! k 0] [W [&& ok [< k l1]] [? [!= [@ src [+ s1 k]] [@ src [+ s2 k]]] [! ok 0] [D]] [! k [+ k 1]]] [^ ok]]]
 [§ decl_add [[$ src] [$ recs] count start len] [D [! i 0] [! found 0] [W [&& [== found 0] [< i count]] [D [? [streq src [@@ recs [* i 2]] [@@ recs [+ [* i 2] 1]] start len] [! found 1] [D]] [! i [+ i 1]]]] [? found [D] [D [@@! recs [* count 2] start] [@@! recs [+ [* count 2] 1] len] [! count [+ count 1]]]] [^ count]]]
@@ -107,10 +112,48 @@
 // Falls through to a streq scan against known function names only when no
 // built-in op matched - exactly the "elif op in self.functions" tier in
 // aic_codegen.py's own check_reads/compile_stmt chain.
-[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 [? [== b 65] 23 -2]]]]]]]]]]]]]]]]]]]
-[§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 -2]]]]]
+[§ classify_op1 [b] [^ [? [== b 46] 1 [? [== b 33] 2 [? [== b 63] 3 [? [== b 87] 4 [? [== b 68] 5 [? [== b 94] 6 [? [== b 64] 7 [? [== b 58] 22 [? [== b 72] 13 [? [== b 76] 14 [? [== b 78] 15 [? [== b 86] 16 [? [== b 79] 17 [? [== b 90] 18 [? [== b 82] 19 [? [== b 75] 20 [? [== b 88] 21 [? [== b 65] 23 [? [== b 73] 24 [? [== b 70] 25 [? [== b 84] 26 -2]]]]]]]]]]]]]]]]]]]]]]]
+[§ classify_op2 [b0 b1] [^ [? [&& [== b0 64] [== b1 33]] 8 [? [&& [== b0 64] [== b1 64]] 9 [? [&& [== b0 194] [== b1 167]] 22 [? [&& [== b0 58] [== b1 58]] 27 [? [&& [== b0 64] [== b1 62]] 28 -2]]]]]]]
 [§ classify_op3 [b0 b1 b2] [^ [? [&& [== b0 64] [&& [== b1 64] [== b2 33]]] 10 [? [&& [== b0 64] [&& [== b1 64] [== b2 36]]] 11 -2]]]]
 [§ classify_op4 [b0 b1 b2 b3] [^ [? [&& [== b0 64] [&& [== b1 64] [&& [== b2 36] [== b3 33]]]] 12 -2]]]
+
+[§ classify_record_op [[$ src] hst hln] [D
+  [! b0 [@ src hst]]
+  [! b1 [@ src [+ hst 1]]]
+  [? [|| [!= b0 64] [!= b1 64]] [^ -2] [D]]
+  [? [< hln 4] [^ -2] [D]]
+  [! b2 [@ src [+ hst 2]]]
+  [? [== b2 46] [^ 29] [D]]
+  [! b3 [@ src [+ hst 3]]]
+  [? [&& [== b2 33] [== b3 46]] [^ 30] [D]]
+  [? [&& [== b2 36] [== b3 46]] [^ 29] [D]]
+  [? [< hln 5] [^ -2] [D]]
+  [! b4 [@ src [+ hst 4]]]
+  [? [&& [== b2 36] [&& [== b3 33] [== b4 46]]] [^ 30] [D]]
+  [^ -2]
+]]
+
+[§ record_op_prefix_len [[$ src] hst hln] [D
+  [! b2 [@ src [+ hst 2]]]
+  [? [== b2 46] [^ 3] [D]]
+  [? [== b2 33] [^ 4] [D]]
+  [? [== b2 36] [D
+      [! b3 [@ src [+ hst 3]]]
+      [? [== b3 46] [^ 4] [D]]
+      [? [== b3 33] [^ 5] [D]]
+    ] [D]]
+  [^ 0]
+]]
+
+[§ is_record_symbol [[$ src] st len] [D
+  [! i 0]
+  [W [< i len] [D
+    [! c [@ src [+ st i]]]
+    [? [|| [== c 58] [== c 46]] [^ 1] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ 0]
+]]
 
 // --- stage 6a: recursive structural classification -----------------------
 // classify_stmt (below) needs 6 params (tokens/src/funcs/func_count/
@@ -127,7 +170,7 @@
 // - honest tradeoff, not a bug: the only thing recursion structurally
 // NEEDS to detect correctly is W/D/'?' (to know what to recurse into), and
 // classify_op_only gets those exactly right.
-[§ classify_op_only [[$ tokens] [$ src] s] [D [! result -2] [? [!= [@@ tokens [* s 3]] 1] [! result -1] [D [! op_tok [+ s 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [^ result]]]
+[§ classify_op_only [[$ tokens] [$ src] s] [D [! result -2] [? [!= [@@ tokens [* s 3]] 1] [! result -1] [D [! op_tok [+ s 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]] [? [&& [== result -2] [>= hln 4]] [! result [classify_record_op src hst hln]] [D]]]]]] [^ result]]]
 
 // A "child" of a bracketed form starting at token p is either another
 // bracketed form (p..match[p]) or a single atom/string token (p..p) -
@@ -151,6 +194,15 @@
       [! ce [next_child_end tokens match p]]
       [! p [+ ce 1]]
       [W [< p e] [D [! ce2 [next_child_end tokens match p]] [recurse_stmt tokens match src p ce2 hist] [! p [+ ce2 1]]]]
+    ] [D]]
+  [? [== code 28] [D
+      [! p1 [+ s 2]]
+      [! ce1 [next_child_end tokens match p1]]
+      [! p2 [+ ce1 1]]
+      [! is_form1 [&& [== [@@ tokens [* p2 3]] 1] [== [@@ match p2] [+ p2 2]]]]
+      [! body_start [? is_form1 [+ [@@ match p2] 1] [+ [@@ match [+ [next_child_end tokens match p2] 1]] 1]]]
+      [! p body_start]
+      [W [< p e] [D [! ce [next_child_end tokens match p]] [recurse_stmt tokens match src p ce hist] [! p [+ ce 1]]]]
     ] [D]]
   [? [== code 5] [D
       [! p [+ s 2]]
@@ -197,24 +249,37 @@
     [D
       [! e [@@ match s]]
       [! headop [+ s 1]]
+      [! is_rec_def [&& [== [@@ tokens [* headop 3]] 3] [&& [== [@@ tokens [+ [* headop 3] 2]] 2] [&& [== [@ src [@@ tokens [+ [* headop 3] 1]]] 58] [== [@ src [+ [@@ tokens [+ [* headop 3] 1]] 1]] 58]]]]]
+      [? is_rec_def [^ outcount] [D]]
       [! is_assign [&& [== [@@ tokens [* headop 3]] 3] [&& [== [@@ tokens [+ [* headop 3] 2]] 1] [== [@ src [@@ tokens [+ [* headop 3] 1]]] 33]]]]
+      [! is_map_op [&& [== [@@ tokens [* headop 3]] 3] [&& [== [@@ tokens [+ [* headop 3] 2]] 2] [&& [== [@ src [@@ tokens [+ [* headop 3] 1]]] 64] [== [@ src [+ [@@ tokens [+ [* headop 3] 1]] 1]] 62]]]]]
+      [! skip_p -1]
+      [? is_map_op [D
+        [! p1 [+ s 2]]
+        [! ce1 [next_child_end tokens match p1]]
+        [! p2 [+ ce1 1]]
+        [! is_f1 [&& [== [@@ tokens [* p2 3]] 1] [== [@@ match p2] [+ p2 2]]]]
+        [! skip_p [? is_f1 p2 [+ [next_child_end tokens match p2] 1]]]
+      ] [D]]
       [! p [+ s 2]]
       [! first 1]
       [W [< p e] [D
         [! ce [next_child_end tokens match p]]
-        [? [&& is_assign first] [D] [! outcount [collect_reads tokens match src p outbuf outcount]]]
+        [? [|| [&& is_assign first] [== p skip_p]] [D] [! outcount [collect_reads tokens match src p outbuf outcount]]]
         [! first 0]
         [! p [+ ce 1]]
       ]]
       [^ outcount]
     ]
     [? [== tag 3]
-      [D [? [is_numeric_atom src [@@ tokens [+ [* s 3] 1]] [@@ tokens [+ [* s 3] 2]]] [^ outcount]
-        [D [@@! outbuf [* outcount 2] [@@ tokens [+ [* s 3] 1]]] [@@! outbuf [+ [* outcount 2] 1] [@@ tokens [+ [* s 3] 2]]] [^ [+ outcount 1]]]]]
+      [D [! ast [@@ tokens [+ [* s 3] 1]]]
+         [! aln [@@ tokens [+ [* s 3] 2]]]
+         [? [|| [is_numeric_atom src ast aln] [is_record_symbol src ast aln]] [^ outcount]
+        [D [@@! outbuf [* outcount 2] ast] [@@! outbuf [+ [* outcount 2] 1] aln] [^ [+ outcount 1]]]]]
       [^ outcount]]]
 ]]
 
-[§ classify_stmt [[$ tokens] [$ src] [$ funcs] func_count mstart mend] [D [! op_tok 0] [! htag 0] [! hst 0] [! hln 0] [! result -2] [? [!= [@@ tokens [* mstart 3]] 1] [! result -1] [D [! op_tok [+ mstart 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]]]]] [? [== result -2] [D [! fi 0] [! found_fn -1] [! name_tok 0] [W [&& [== found_fn -1] [< fi func_count]] [D [! name_tok [@@ funcs [+ [* fi 4] 1]]] [? [streq src hst hln [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]] [! found_fn fi] [D]] [! fi [+ fi 1]]]] [? [!= found_fn -1] [! result 0] [! result -1]]] [D]] [^ result]]]
+[§ classify_stmt [[$ tokens] [$ src] [$ funcs] func_count mstart mend] [D [! op_tok 0] [! htag 0] [! hst 0] [! hln 0] [! result -2] [? [!= [@@ tokens [* mstart 3]] 1] [! result -1] [D [! op_tok [+ mstart 1]] [! htag [@@ tokens [* op_tok 3]]] [! hst [@@ tokens [+ [* op_tok 3] 1]]] [! hln [@@ tokens [+ [* op_tok 3] 2]]] [? [!= htag 3] [! result -1] [D [? [== hln 1] [! result [classify_op1 [@ src hst]]] [D]] [? [== hln 2] [! result [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]] [? [== hln 3] [! result [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]] [? [== hln 4] [! result [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]] [? [&& [== result -2] [>= hln 4]] [! result [classify_record_op src hst hln]] [D]]]]]] [? [== result -2] [D [! fi 0] [! found_fn -1] [! name_tok 0] [W [&& [== found_fn -1] [< fi func_count]] [D [! name_tok [@@.Func:name_tok funcs fi]] [? [streq src hst hln [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]] [! found_fn fi] [D]] [! fi [+ fi 1]]]] [? [!= found_fn -1] [! result 0] [! result -1]]] [D]] [^ result]]]
 
 // --- stage 7: full expression emitter (emit_expr) --------------------------
 // Ports aic_codegen.py's Codegen.compile_expr into AIC: literals, local
@@ -257,6 +322,29 @@
 [§ binop_code1 [b] [^ [? [== b 43] 1 [? [== b 45] 2 [? [== b 42] 3 [? [== b 47] 4 [? [== b 37] 5 [? [== b 38] 6 [? [== b 124] 7 [? [== b 60] 8 [? [== b 62] 9 -1]]]]]]]]]]]
 [§ binop_code2 [b0 b1] [^ [? [&& [== b0 61] [== b1 61]] 10 [? [&& [== b0 33] [== b1 61]] 11 [? [&& [== b0 60] [== b1 61]] 12 [? [&& [== b0 62] [== b1 61]] 13 [? [&& [== b0 94] [== b1 94]] 14 [? [&& [== b0 60] [== b1 60]] 15 [? [&& [== b0 62] [== b1 62]] 16 -1]]]]]]]]]
 [§ binop_classify [[$ src] hst hln] [D [! b0 [@ src hst]] [! result -1] [? [== hln 1] [! result [binop_code1 b0]] [D]] [? [== hln 2] [D [! b1 [@ src [+ hst 1]]] [! result [binop_code2 b0 b1]]] [D]] [^ result]]]
+
+[§ can_fold_binop [bcode v2] [D
+  [? [== bcode 4] [^ [!= v2 0]] [D]]
+  [? [== bcode 5] [^ [!= v2 0]] [D]]
+  [? [== bcode 15] [^ [&& [>= v2 0] [< v2 64]]] [D]]
+  [? [== bcode 16] [^ [&& [>= v2 0] [< v2 64]]] [D]]
+  [? [|| [&& [>= bcode 1] [<= bcode 3]] [|| [== bcode 6] [|| [== bcode 7] [== bcode 14]]]] [^ 1] [D]]
+  [^ 0]
+]]
+
+[§ fold_binop [bcode v1 v2] [D
+  [? [== bcode 1] [^ [+ v1 v2]] [D]]
+  [? [== bcode 2] [^ [- v1 v2]] [D]]
+  [? [== bcode 3] [^ [* v1 v2]] [D]]
+  [? [== bcode 4] [^ [/ v1 v2]] [D]]
+  [? [== bcode 5] [^ [% v1 v2]] [D]]
+  [? [== bcode 6] [^ [& v1 v2]] [D]]
+  [? [== bcode 7] [^ [| v1 v2]] [D]]
+  [? [== bcode 14] [^ [^^ v1 v2]] [D]]
+  [? [== bcode 15] [^ [<< v1 v2]] [D]]
+  [? [== bcode 16] [^ [>> v1 v2]] [D]]
+  [^ 0]
+]]
 
 // classify_op1/2/3/4: copied verbatim from compiler.aic - same codes, same
 // meaning (7=@ 8=@! 9=@@ 10=@@! 11=@@$ 12=@@$!) - reused here rather than
@@ -325,7 +413,7 @@
   [! funcs [@@$ ctx 4]]
   [! fpc [@@$ ctx 5]]
   [! pcount [@@ fpc fi]]
-  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [! name_tok [@@.Func:name_tok funcs fi]]
   [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
   [! nst [@@ tokens [+ [* name_tok 3] 1]]]
   [! nln [@@ tokens [+ [* name_tok 3] 2]]]
@@ -362,7 +450,7 @@
   [! fi 0]
   [! found -1]
   [W [&& [== found -1] [< fi fcount]] [D
-    [! nmtok [@@ funcs [+ [* fi 4] 1]]]
+    [! nmtok [@@.Func:name_tok funcs fi]]
     [? [== [@@ tokens [* nmtok 3]] 1] [! nmtok [+ nmtok 2]] [D]]
     [? [streq src hst hln [@@ tokens [+ [* nmtok 3] 1]] [@@ tokens [+ [* nmtok 3] 2]]] [! found fi] [D]]
     [! fi [+ fi 1]]
@@ -420,6 +508,7 @@
       [! ast [@@ tokens [+ [* p 3] 1]]]
       [! aln [@@ tokens [+ [* p 3] 2]]]
       [? [is_numeric_atom src ast aln] [^ 0] [D]]
+      [? [is_record_symbol src ast aln] [^ 0] [D]]
       [! decls [@@$ ctx 2]]
       [! dcount [@@ ctx 3]]
       [! idx [decl_index src decls dcount ast aln]]
@@ -435,7 +524,12 @@
   [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
   [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
   [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
-  [? [|| [|| [== opcode 13] [== opcode 15]] [|| [== opcode 19] [== opcode 23]]] [^ 1] [D]]
+  [? [&& [== opcode -2] [>= hln 4]] [! opcode [classify_record_op src hst hln]] [D]]
+  [? [== opcode 29] [D
+      [! is_ptr [&& [>= hln 4] [== [@ src [+ hst 2]] 36]]]
+      [^ [? is_ptr 1 0]]
+    ] [D]]
+  [? [|| [|| [== opcode 13] [== opcode 15]] [|| [== opcode 19] [|| [== opcode 23] [== opcode 24]]]] [^ 1] [D]]
   [? [== opcode 3] [D
       [! cond [+ op_tok 1]]
       [! ce [next_child_end tokens match cond]]
@@ -585,6 +679,302 @@
       [K h "    movq    %rax, %rdi\n"]
       [K h "    call    aic_arg\n"]
     ] [D]]
+  [? [== code 24] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_input\n"]
+    ] [D]]
+  [? [== code 25] [D
+      [emit_expr tokens match src arg1 ctx]
+      [K h "    movq    %rax, %rdi\n"]
+      [K h "    call    aic_free\n"]
+    ] [D]]
+  [? [== code 26] [D
+      [K h "    call    aic_time\n"]
+    ] [D]]
+  [^ 0]
+]]
+
+[§ resolve_record_field [[$ src] spec_st spec_len [$ ctx] [$ out]] [D
+  [! rec_names [@@$ ctx 15]]
+  [! rec_sizes [@@$ ctx 16]]
+  [! fld_names [@@$ ctx 18]]
+  [! fld_offsets [@@$ ctx 19]]
+  [! fld_sizes [@@$ ctx 20]]
+  [! fld_recs [@@$ ctx 21]]
+  [! fld_count [@@ ctx 22]]
+  [! i 0]
+  [! found 0]
+  [W [&& [== found 0] [< i fld_count]] [D
+    [! fst [@@ fld_names [* i 2]]]
+    [! fln [@@ fld_names [+ [* i 2] 1]]]
+    [! ri [@@ fld_recs i]]
+    [! rst [@@ rec_names [* ri 2]]]
+    [! rln [@@ rec_names [+ [* ri 2] 1]]]
+    [? [&& [== spec_len fln] [streq src spec_st spec_len fst fln]]
+      [D
+        [@@! out 0 [@@ fld_offsets i]]
+        [@@! out 1 [@@ fld_sizes i]]
+        [! found 1]
+      ]
+      [D
+        [! qlen [+ rln [+ 1 fln]]]
+        [? [== spec_len qlen]
+          [D
+            [! sep [@ src [+ spec_st rln]]]
+            [? [|| [== sep 58] [== sep 46]]
+              [D
+                [? [&& [streq src spec_st rln rst rln] [streq src [+ spec_st [+ rln 1]] fln fst fln]]
+                  [D
+                    [@@! out 0 [@@ fld_offsets i]]
+                    [@@! out 1 [@@ fld_sizes i]]
+                    [! found 1]
+                  ] [D]]
+              ] [D]]
+          ] [D]]
+      ]]
+    [! i [+ i 1]]
+  ]]
+  [^ found]
+]]
+
+[§ resolve_record_const [[$ tokens] [$ src] ast aln [$ ctx]] [D
+  [! rec_names [@@$ ctx 15]]
+  [! rec_sizes [@@$ ctx 16]]
+  [! rcount [@@ ctx 17]]
+  [! r 0]
+  [! res -1]
+  [W [&& [== res -1] [< r rcount]] [D
+    [! rst [@@ rec_names [* r 2]]]
+    [! rln [@@ rec_names [+ [* r 2] 1]]]
+    [! rsize [@@ rec_sizes r]]
+    [? [== aln [+ rln 5]]
+      [D
+        [! sep [@ src [+ ast rln]]]
+        [? [|| [== sep 58] [== sep 46]]
+          [D
+            [? [streq src ast rln rst rln]
+              [D
+                [! sst [+ ast [+ rln 1]]]
+                [? [&& [== [@ src sst] 115] [&& [== [@ src [+ sst 1]] 105] [&& [== [@ src [+ sst 2]] 122] [== [@ src [+ sst 3]] 101]]]]
+                  [! res rsize]
+                  [D]]
+              ] [D]]
+          ] [D]]
+      ]
+      [D
+        [? [== aln [+ rln 6]]
+          [D
+            [! sep [@ src [+ ast rln]]]
+            [? [|| [== sep 58] [== sep 46]]
+              [D
+                [? [streq src ast rln rst rln]
+                  [D
+                    [! bst [+ ast [+ rln 1]]]
+                    [? [&& [== [@ src bst] 98] [&& [== [@ src [+ bst 1]] 121] [&& [== [@ src [+ bst 2]] 116] [&& [== [@ src [+ bst 3]] 101] [== [@ src [+ bst 4]] 115]]]]]
+                      [! res [* rsize 8]]
+                      [D]]
+                  ] [D]]
+              ] [D]]
+          ] [D]]
+      ]]
+    [! r [+ r 1]]
+  ]]
+  [^ res]
+]]
+
+[§ get_int_constant [[$ tokens] [$ src] p [$ ctx]] [D
+  [! tag [@@ tokens [* p 3]]]
+  [? [== tag 3]
+    [D
+      [! ast [@@ tokens [+ [* p 3] 1]]]
+      [! aln [@@ tokens [+ [* p 3] 2]]]
+      [? [is_numeric_atom src ast aln]
+        [^ [V [slice_str src ast aln]]]
+        [D
+          [! rc [resolve_record_const tokens src ast aln ctx]]
+          [? [!= rc -1] [^ rc] [D]]
+        ]]
+    ] [D]]
+  [^ -999999999]
+]]
+
+[§ emit_record_get [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+  [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+  [! plen [record_op_prefix_len src hst hln]]
+  [! spec_st [+ hst plen]]
+  [! spec_len [- hln plen]]
+  [! fld_info [H 16]]
+  [! ok [resolve_record_field src spec_st spec_len ctx fld_info]]
+  [? [== ok 0] [D [. "[ERR :code 403 :kind CODEGEN :msg UNRESOLVED_RECORD_FIELD]"] [^ 0]] [D]]
+  [! offset [@@ fld_info 0]]
+  [! size [@@ fld_info 1]]
+  [! e [@@ match s]]
+  [! ptr_tok [+ op_tok 1]]
+  [! pe [next_child_end tokens match ptr_tok]]
+  [! idx_tok [+ pe 1]]
+  [? [== idx_tok e] [D
+      [emit_expr tokens match src ptr_tok ctx]
+      [! disp [* offset 8]]
+      [! disptxt [N disp]]
+      [K h "    movq    "] [K h disptxt] [K h "(%rax), %rax\n"]
+    ] [D
+      [! c_idx [get_int_constant tokens src idx_tok ctx]]
+      [? [!= c_idx -999999999] [D
+          [! disp [* [+ [* c_idx size] offset] 8]]
+          [! disptxt [N disp]]
+          [emit_expr tokens match src ptr_tok ctx]
+          [K h "    movq    "] [K h disptxt] [K h "(%rax), %rax\n"]
+        ] [D
+          [emit_expr tokens match src ptr_tok ctx]
+          [K h "    pushq   %rax\n"]
+          [emit_expr tokens match src idx_tok ctx]
+          [K h "    popq    %rbx\n"]
+          [? [> size 1] [D
+              [! scale [* size 8]]
+              [! scaletxt [N scale]]
+              [K h "    imulq   $"] [K h scaletxt] [K h ", %rax\n"]
+              [! disp [* offset 8]]
+              [! disptxt [N disp]]
+              [K h "    movq    "] [K h disptxt] [K h "(%rbx,%rax), %rax\n"]
+            ] [D
+              [! disp [* offset 8]]
+              [! disptxt [N disp]]
+              [K h "    movq    "] [K h disptxt] [K h "(%rbx,%rax,8), %rax\n"]
+            ]]
+        ]]
+    ]]
+  [^ 0]
+]]
+
+[§ emit_record_set [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! hst [@@ tokens [+ [* op_tok 3] 1]]]
+  [! hln [@@ tokens [+ [* op_tok 3] 2]]]
+  [! plen [record_op_prefix_len src hst hln]]
+  [! spec_st [+ hst plen]]
+  [! spec_len [- hln plen]]
+  [! fld_info [H 16]]
+  [! ok [resolve_record_field src spec_st spec_len ctx fld_info]]
+  [? [== ok 0] [D [. "[ERR :code 403 :kind CODEGEN :msg UNRESOLVED_RECORD_FIELD]"] [^ 0]] [D]]
+  [! offset [@@ fld_info 0]]
+  [! size [@@ fld_info 1]]
+  [! ptr_tok [+ op_tok 1]]
+  [! pe [next_child_end tokens match ptr_tok]]
+  [! a2 [+ pe 1]]
+  [! a2e [next_child_end tokens match a2]]
+  [! a3 [+ a2e 1]]
+  [! e [@@ match s]]
+  [? [== a3 e] [D
+      [! val_tok a2]
+      [emit_expr tokens match src ptr_tok ctx]
+      [K h "    pushq   %rax\n"]
+      [emit_expr tokens match src val_tok ctx]
+      [K h "    popq    %rbx\n"]
+      [! disp [* offset 8]]
+      [! disptxt [N disp]]
+      [K h "    movq    %rax, "] [K h disptxt] [K h "(%rbx)\n"]
+    ] [D
+      [! idx_tok a2]
+      [! val_tok a3]
+      [! c_idx [get_int_constant tokens src idx_tok ctx]]
+      [? [!= c_idx -999999999] [D
+          [! disp [* [+ [* c_idx size] offset] 8]]
+          [! disptxt [N disp]]
+          [emit_expr tokens match src ptr_tok ctx]
+          [K h "    pushq   %rax\n"]
+          [emit_expr tokens match src val_tok ctx]
+          [K h "    popq    %rbx\n"]
+          [K h "    movq    %rax, "] [K h disptxt] [K h "(%rbx)\n"]
+        ] [D
+          [emit_expr tokens match src ptr_tok ctx]
+          [K h "    pushq   %rax\n"]
+          [emit_expr tokens match src idx_tok ctx]
+          [? [> size 1] [D
+              [! scale [* size 8]]
+              [! scaletxt [N scale]]
+              [K h "    imulq   $"] [K h scaletxt] [K h ", %rax\n"]
+            ] [D
+              [K h "    shlq    $3, %rax\n"]
+            ]]
+          [K h "    pushq   %rax\n"]
+          [emit_expr tokens match src val_tok ctx]
+          [K h "    popq    %rcx\n"]
+          [K h "    popq    %rbx\n"]
+          [! disp [* offset 8]]
+          [! disptxt [N disp]]
+          [K h "    movq    %rax, "] [K h disptxt] [K h "(%rbx,%rcx)\n"]
+        ]]
+    ]]
+  [^ 0]
+]]
+
+[§ get_map_var_tok [[$ tokens] [$ match] b] [D
+  [! op_tok [+ b 1]]
+  [! p1 [+ op_tok 1]]
+  [! ce1 [next_child_end tokens match p1]]
+  [! p2 [+ ce1 1]]
+  [! is_form1 [&& [== [@@ tokens [* p2 3]] 1] [== [@@ match p2] [+ p2 2]]]]
+  [? is_form1 [^ [+ p2 1]] [D]]
+  [! ce2 [next_child_end tokens match p2]]
+  [! p3 [+ ce2 1]]
+  [! is_form2 [&& [== [@@ tokens [* p3 3]] 1] [== [@@ match p3] [+ p3 2]]]]
+  [? is_form2 [^ [+ p3 1]] [D]]
+  [^ -1]
+]]
+
+[§ emit_map [[$ tokens] [$ match] [$ src] s [$ ctx]] [D
+  [! h [@@ ctx 0]]
+  [! op_tok [+ s 1]]
+  [! e [@@ match s]]
+  [! p1 [+ op_tok 1]]
+  [! ce1 [next_child_end tokens match p1]]
+  [! p2 [+ ce1 1]]
+  [! is_form1 [&& [== [@@ tokens [* p2 3]] 1] [== [@@ match p2] [+ p2 2]]]]
+  [! has_start [? is_form1 0 1]]
+  [! start_tok [? has_start p1 0]]
+  [! limit_tok [? has_start p2 p1]]
+  [! ce2 [? has_start [next_child_end tokens match p2] 0]]
+  [! var_form [? has_start [+ ce2 1] p2]]
+  [! var_tok [+ var_form 1]]
+  [! body_start [+ [@@ match var_form] 1]]
+  [! vst [@@ tokens [+ [* var_tok 3] 1]]]
+  [! vln [@@ tokens [+ [* var_tok 3] 2]]]
+  [! decls [@@$ ctx 2]]
+  [! dcount [@@ ctx 3]]
+  [! vidx [decl_index src decls dcount vst vln]]
+  [! voff [* -8 [+ vidx 1]]]
+  [! vofftxt [N voff]]
+  [? has_start
+    [D
+      [emit_expr tokens match src start_tok ctx]
+      [K h "    movq    %rax, "] [K h vofftxt] [K h "(%rbp)\n"]
+    ]
+    [D
+      [K h "    movq    $0, "] [K h vofftxt] [K h "(%rbp)\n"]
+    ]]
+  [! lbl1 [new_label_num ctx]] [! lbl1txt [N lbl1]]
+  [! lbl2 [new_label_num ctx]] [! lbl2txt [N lbl2]]
+  [K h ".Lmaptop"] [K h lbl1txt] [K h ":\n"]
+  [K h "    movq    "] [K h vofftxt] [K h "(%rbp), %rax\n"]
+  [K h "    pushq   %rax\n"]
+  [emit_expr tokens match src limit_tok ctx]
+  [K h "    movq    %rax, %rbx\n"]
+  [K h "    popq    %rax\n"]
+  [K h "    cmpq    %rbx, %rax\n"]
+  [K h "    jge     .Lmapend"] [K h lbl2txt] [K h "\n"]
+  [! p body_start]
+  [W [< p e] [D
+    [emit_stmt tokens match src p ctx]
+    [! p [+ [next_child_end tokens match p] 1]]
+  ]]
+  [K h "    incq    "] [K h vofftxt] [K h "(%rbp)\n"]
+  [K h "    jmp     .Lmaptop"] [K h lbl1txt] [K h "\n"]
+  [K h ".Lmapend"] [K h lbl2txt] [K h ":\n"]
   [^ 0]
 ]]
 
@@ -708,7 +1098,7 @@
   [? [== code 11] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setne    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
   [? [== code 12] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setle    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
   [? [== code 13] [D [K h "    cmpq    %rbx, %rax\n"] [K h "    setge    %al\n"] [K h "    movzbq  %al, %rax\n"]] [D]]
-  [? [|| [< code 1] [> code 16]] [. "CodegenError: emit_expr only supports arithmetic/comparison binary ops so far - got an unrecognized/unsupported operator"] [D]]
+  [? [|| [< code 1] [> code 16]] [. "[ERR :code 404 :kind CODEGEN :msg UNSUPPORTED_BINOP]"] [D]]
   [^ 0]
 ]]
 
@@ -730,12 +1120,18 @@
           [! vtxt [N v]]
           [K h "    movq    $"] [K h vtxt] [K h ", %rax\n"]
         ] [D
-          [! decls [@@$ ctx 2]]
-          [! dcount [@@ ctx 3]]
-          [! idx [decl_index src decls dcount ast aln]]
-          [! off [* -8 [+ idx 1]]]
-          [! offtxt [N off]]
-          [K h "    movq    "] [K h offtxt] [K h "(%rbp), %rax\n"]
+          [! rc [resolve_record_const tokens src ast aln ctx]]
+          [? [!= rc -1] [D
+              [! rctxt [N rc]]
+              [K h "    movq    $"] [K h rctxt] [K h ", %rax\n"]
+            ] [D
+              [! decls [@@$ ctx 2]]
+              [! dcount [@@ ctx 3]]
+              [! idx [decl_index src decls dcount ast aln]]
+              [! off [* -8 [+ idx 1]]]
+              [! offtxt [N off]]
+              [K h "    movq    "] [K h offtxt] [K h "(%rbp), %rax\n"]
+            ]]
         ]]
     ] [D
       [! op_tok [+ s 1]]
@@ -750,40 +1146,61 @@
       [? [== hln 2] [! opcode [classify_op2 b0 b1]] [D]]
       [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
       [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
-      [? [== opcode 3]
-        [emit_ternary tokens match src s ctx]
-        [? is_sc_and
-          [emit_shortcircuit tokens match src s ctx 1]
-          [? is_sc_or
-            [emit_shortcircuit tokens match src s ctx 0]
-            [? [|| [== opcode 7] [== opcode 8]]
-              [emit_byte_op tokens match src s ctx opcode]
-              [? [|| [|| [== opcode 9] [== opcode 10]] [|| [== opcode 11] [== opcode 12]]]
-                [emit_word_op tokens match src s ctx opcode]
-                [? [&& [>= opcode 13] [<= opcode 23]]
-                  [emit_libc_op tokens match src s ctx opcode]
+      [? [&& [== opcode -2] [>= hln 4]] [! opcode [classify_record_op src hst hln]] [D]]
+      [? [== opcode 29]
+        [emit_record_get tokens match src s ctx]
+        [? [== opcode 30]
+          [emit_record_set tokens match src s ctx]
+          [? [== opcode 3]
+            [emit_ternary tokens match src s ctx]
+            [? is_sc_and
+              [emit_shortcircuit tokens match src s ctx 1]
+              [? is_sc_or
+                [emit_shortcircuit tokens match src s ctx 0]
+                [? [|| [== opcode 7] [== opcode 8]]
+                  [emit_byte_op tokens match src s ctx opcode]
+                  [? [|| [|| [== opcode 9] [== opcode 10]] [|| [== opcode 11] [== opcode 12]]]
+                    [emit_word_op tokens match src s ctx opcode]
+                    [? [&& [>= opcode 13] [<= opcode 26]]
+                      [emit_libc_op tokens match src s ctx opcode]
+                      [D
+                      [! bcode [binop_classify src hst hln]]
+                      [? [!= bcode -1]
+                        [D
+                          [! left [+ op_tok 1]]
+                          [! lce [next_child_end tokens match left]]
+                          [! right [+ lce 1]]
+                          [! v1 [get_int_constant tokens src left ctx]]
+                          [! v2 [get_int_constant tokens src right ctx]]
+                          [! folded 0]
+                          [? [&& [!= v1 -999999999] [!= v2 -999999999]]
+                            [D
+                              [? [can_fold_binop bcode v2]
+                                [D
+                                  [! folded 1]
+                                  [! res [fold_binop bcode v1 v2]]
+                                  [! restxt [N res]]
+                                  [K h "    movq    $"] [K h restxt] [K h ", %rax\n"]
+                                ] [D]]
+                            ] [D]]
+                          [? [== folded 0]
+                            [D
+                              [emit_expr tokens match src left ctx]
+                              [K h "    pushq   %rax\n"]
+                              [emit_expr tokens match src right ctx]
+                              [K h "    movq    %rax, %rbx\n"]
+                              [K h "    popq    %rax\n"]
+                              [emit_binop_tail ctx bcode]
+                            ] [D]]
+                        ]
                   [D
-                  [! bcode [binop_classify src hst hln]]
-                  [? [!= bcode -1]
-                    [D
-                      [! left [+ op_tok 1]]
-                      [! lce [next_child_end tokens match left]]
-                      [! right [+ lce 1]]
-                      [emit_expr tokens match src left ctx]
-                      [K h "    pushq   %rax\n"]
-                      [emit_expr tokens match src right ctx]
-                      [K h "    movq    %rax, %rbx\n"]
-                      [K h "    popq    %rax\n"]
-                      [emit_binop_tail ctx bcode]
-                    ]
-              [D
-                [! found [resolve_func tokens src hst hln ctx]]
-                [? [!= found -1]
-                  [emit_call tokens match src s ctx found]
-                  [. "CodegenError: emit_expr - unresolved symbol in expression position"]]
-              ]]
-            ]]]]]]]
-    ]]]
+                    [! found [resolve_func tokens src hst hln ctx]]
+                    [? [!= found -1]
+                      [emit_call tokens match src s ctx found]
+                      [. "[ERR :code 402 :kind CODEGEN :msg UNRESOLVED_EXPR_SYMBOL]"]]
+                  ]]
+                ]]]]]]]]]
+        ]]]
 ]]
 
 // emit_assign: '[! name expr]' - compile the RHS, store %rax to name's
@@ -817,7 +1234,7 @@
   [! curfi [@@ ctx 10]]
   [? [>= curfi 0] [D
       [! funcs [@@$ ctx 4]]
-      [! name_tok [@@ funcs [+ [* curfi 4] 1]]]
+      [! name_tok [@@.Func:name_tok funcs curfi]]
       [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
       [K h "    jmp     .Lret_"]
       [K h [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
@@ -911,19 +1328,26 @@
     [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
     [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
     [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
-    [? [== opcode 2] [emit_assign tokens match src s ctx]
-      [? [== opcode 6] [emit_return tokens match src s ctx]
-        [? [== opcode 3] [emit_if tokens match src s ctx]
-          [? [== opcode 4] [emit_while tokens match src s ctx]
-            [? [== opcode 5] [emit_do tokens match src s ctx]
-              [? [== opcode 1] [emit_print tokens match src s ctx]
-                [? [&& [>= opcode 7] [<= opcode 23]]
-                  [emit_expr tokens match src s ctx]
-                  [D
-                    [! found [resolve_func tokens src hst hln ctx]]
-                    [? [!= found -1]
-                      [emit_call tokens match src s ctx found]
-                      [. "CodegenError: emit_stmt - unsupported statement head"]]
+    [? [&& [== opcode -2] [>= hln 4]] [! opcode [classify_record_op src hst hln]] [D]]
+    [? [== opcode 27] [D]
+      [? [== opcode 28] [emit_map tokens match src s ctx]
+        [? [|| [== opcode 29] [== opcode 30]] [emit_expr tokens match src s ctx]
+          [? [== opcode 2] [emit_assign tokens match src s ctx]
+            [? [== opcode 6] [emit_return tokens match src s ctx]
+              [? [== opcode 3] [emit_if tokens match src s ctx]
+                [? [== opcode 4] [emit_while tokens match src s ctx]
+                  [? [== opcode 5] [emit_do tokens match src s ctx]
+                    [? [== opcode 1] [emit_print tokens match src s ctx]
+                      [? [&& [>= opcode 7] [<= opcode 26]]
+                        [emit_expr tokens match src s ctx]
+                        [D
+                          [! found [resolve_func tokens src hst hln ctx]]
+                          [? [!= found -1]
+                            [emit_call tokens match src s ctx found]
+                            [. "[ERR :code 401 :kind CODEGEN :msg UNSUPPORTED_STATEMENT]"]]
+                        ]
+                      ]
+                    ]
                   ]
                 ]
               ]
@@ -985,13 +1409,14 @@
 
 [§ emit_main_epilogue [h] [D
   [K h "    movq    $0, %rax\n"]
+  [K h ".Lmain_ret:\n"]
   [K h "    leave\n"]
   [K h "    ret\n"]
   [^ 0]
 ]]
 
 [§ emit_function_prologue [[$ tokens] [$ src] [$ funcs] fi h frame_size] [D
-  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [! name_tok [@@.Func:name_tok funcs fi]]
   [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
   [! fstxt [N frame_size]]
   [K h "aicfn_"]
@@ -1015,7 +1440,7 @@
 ]]
 
 [§ emit_function_epilogue [[$ tokens] [$ src] [$ funcs] fi h] [D
-  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+  [! name_tok [@@.Func:name_tok funcs fi]]
   [? [== [@@ tokens [* name_tok 3]] 1] [! name_tok [+ name_tok 2]] [D]]
   [K h "    movq    $0, %rax\n"]
   [K h ".Lret_"]
@@ -1064,7 +1489,7 @@
 [§ emit_rodata_divzero [h] [D
   [! q [dq]]
   [K h "divzero_msg:\n"]
-  [K h "    .string "] [K h q] [K h "AIC Runtime Error: Division by zero\\n"] [K h q] [K h "\n"]
+  [K h "    .string "] [K h q] [K h "[ERR :code 502 :kind RUNTIME :msg DIVISION_BY_ZERO]\\n"] [K h q] [K h "\n"]
   [K h "divzero_msg_end:\n"]
   [K h "    .equ divzero_len, divzero_msg_end - divzero_msg - 1\n"]
   [^ 0]
@@ -1073,7 +1498,7 @@
 [§ emit_rodata_runtime [h] [D
   [! q [dq]]
   [K h "runtimeerr_msg:\n"]
-  [K h "    .string "] [K h q] [K h "AIC Runtime Error: a file or memory operation failed (open/allocate)\\n"] [K h q] [K h "\n"]
+  [K h "    .string "] [K h q] [K h "[ERR :code 501 :kind RUNTIME :msg IO_OR_ALLOC_FAILED]\\n"] [K h q] [K h "\n"]
   [K h "runtimeerr_msg_end:\n"]
   [K h "    .equ runtimeerr_len, runtimeerr_msg_end - runtimeerr_msg - 1\n"]
   [^ 0]
@@ -1105,6 +1530,7 @@
 ]]
 
 [§ emit_note_section [h] [D
+  [copy_file_to "tools/aic_wincrt_bridge.s" h]
   [^ 0]
 ]]
 
@@ -1119,6 +1545,30 @@
     [? [== hln 2] [! opcode [classify_op2 [@ src hst] [@ src [+ hst 1]]]] [D]]
     [? [== hln 3] [! opcode [classify_op3 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]]]] [D]]
     [? [== hln 4] [! opcode [classify_op4 [@ src hst] [@ src [+ hst 1]] [@ src [+ hst 2]] [@ src [+ hst 3]]]] [D]]
+    [? [&& [== opcode -2] [>= hln 4]] [! opcode [classify_record_op src hst hln]] [D]]
+    [? [== opcode 28] [D
+        [! mvtok [get_map_var_tok tokens match s]]
+        [? [!= mvtok -1] [D
+            [! vst [@@ tokens [+ [* mvtok 3] 1]]]
+            [! vln [@@ tokens [+ [* mvtok 3] 2]]]
+            [! decls [@@$ ctx 2]]
+            [! dcount [@@ ctx 3]]
+            [! idx [decl_index src decls dcount vst vln]]
+            [! types [@@$ ctx 12]]
+            [@@! types idx 0]
+          ] [D]]
+        [! p1 [+ op_tok 1]]
+        [! ce1 [next_child_end tokens match p1]]
+        [! p2 [+ ce1 1]]
+        [! is_form1 [&& [== [@@ tokens [* p2 3]] 1] [== [@@ match p2] [+ p2 2]]]]
+        [! body_start [? is_form1 [+ [@@ match p2] 1] [+ [@@ match [+ [next_child_end tokens match p2] 1]] 1]]]
+        [! p body_start]
+        [! e [@@ match s]]
+        [W [< p e] [D
+          [infer_stmt_types tokens match src p ctx]
+          [! p [+ [next_child_end tokens match p] 1]]
+        ]]
+      ] [D]]
     [? [== opcode 2] [D
         [! name_tok [+ op_tok 1]]
         [! expr_tok [+ name_tok 1]]
@@ -1171,7 +1621,7 @@
 [! h [O in_path "r"]]
 [! n [Z h]]
 [! src [R h n]]
-[! tokens [H [* [+ n 1] 24]]]
+[! tokens [H [* [+ n 1] Token.bytes]]]
 [! i 0]
 [! tok_count 0]
 [! in_comment 0]
@@ -1190,18 +1640,27 @@
 [! k 0]
 [! tag 0]
 [! j 0]
-[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [@@! stack sp j] [! sp [+ sp 1]]] [? [== tag 2] [? [== sp 0] [? [== err 0] [D [. "ParseError: unexpected ']' at byte" [@@ tokens [+ [* j 3] 1]]] [! err 1]] [D]] [D [! sp [- sp 1]] [! k [@@ stack sp]] [@@! match k j] [@@! match j k] [! pairs [+ pairs 1]]]] [D]]] [! j [+ j 1]]]
-[? [&& [== err 0] [> sp 0]] [D [! k [@@ stack [- sp 1]]] [. "ParseError: unclosed '[' at byte" [@@ tokens [+ [* k 3] 1]]] [! err 1]] [D]]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [@@! stack sp j] [! sp [+ sp 1]]] [? [== tag 2] [? [== sp 0] [? [== err 0] [D [. "[ERR :code 101 :kind PARSE :msg UNEXPECTED_BRACKET :byte" [@@ tokens [+ [* j 3] 1]] "]"] [! err 1]] [D]] [D [! sp [- sp 1]] [! k [@@ stack sp]] [@@! match k j] [@@! match j k] [! pairs [+ pairs 1]]]] [D]]] [! j [+ j 1]]]
+[? [&& [== err 0] [> sp 0]] [D [! k [@@ stack [- sp 1]]] [. "[ERR :code 102 :kind PARSE :msg UNCLOSED_BRACKET :byte" [@@ tokens [+ [* k 3] 1]] "]"] [! err 1]] [D]]
+[? [!= err 0] [^ 1] [D]]
 
-[! funcs [H [* [+ tok_count 1] 32]]]
-[! mains [H [* [+ tok_count 1] 16]]]
+[! funcs [H [* [+ tok_count 1] Func.bytes]]]
+[! mains [H [* [+ tok_count 1] Main.bytes]]]
+[! rec_names [H [* [+ tok_count 1] 16]]]
+[! rec_sizes [H [* [+ tok_count 1] 8]]]
+[! fld_names [H [* [+ tok_count 1] 16]]]
+[! fld_offsets [H [* [+ tok_count 1] 8]]]
+[! fld_sizes [H [* [+ tok_count 1] 8]]]
+[! fld_recs [H [* [+ tok_count 1] 8]]]
 [! func_count 0]
 [! main_count 0]
+[! rec_count 0]
+[! fld_count 0]
 [! form_end 0]
 [! name_tok 0]
 [! params_open_tok 0]
 [! j 0]
-[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [! form_end [@@ match j]] [! name_tok [+ j 2]] [? [is_section tokens src [+ j 1]] [D [? [== [@@ tokens [* name_tok 3]] 1] [! params_open_tok [+ [@@ match name_tok] 1]] [! params_open_tok [+ name_tok 1]]] [@@! funcs [* func_count 4] j] [@@! funcs [+ [* func_count 4] 1] name_tok] [@@! funcs [+ [* func_count 4] 2] params_open_tok] [@@! funcs [+ [* func_count 4] 3] form_end] [! func_count [+ func_count 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] form_end] [! main_count [+ main_count 1]]]] [! j [+ form_end 1]]] [D [@@! mains [* main_count 2] j] [@@! mains [+ [* main_count 2] 1] j] [! main_count [+ main_count 1]] [! j [+ j 1]]]]]
+[W [< j tok_count] [! tag [@@ tokens [* j 3]]] [? [== tag 1] [D [! form_end [@@ match j]] [! name_tok [+ j 2]] [? [is_section tokens src [+ j 1]] [D [? [== [@@ tokens [* name_tok 3]] 1] [! params_open_tok [+ [@@ match name_tok] 1]] [! params_open_tok [+ name_tok 1]]] [@@!.Func:form_start funcs func_count j] [@@!.Func:name_tok funcs func_count name_tok] [@@!.Func:params_open_tok funcs func_count params_open_tok] [@@!.Func:form_end funcs func_count form_end] [! func_count [+ func_count 1]]] [? [is_record_def tokens src [+ j 1]] [D [! rst [@@ tokens [+ [* name_tok 3] 1]]] [! rln [@@ tokens [+ [* name_tok 3] 2]]] [@@! rec_names [* rec_count 2] rst] [@@! rec_names [+ [* rec_count 2] 1] rln] [! fld_start_idx fld_count] [! fp [+ j 3]] [! cur_fld 0] [W [< fp form_end] [D [@@! fld_names [* fld_count 2] [@@ tokens [+ [* fp 3] 1]]] [@@! fld_names [+ [* fld_count 2] 1] [@@ tokens [+ [* fp 3] 2]]] [@@! fld_offsets fld_count cur_fld] [@@! fld_recs fld_count rec_count] [! cur_fld [+ cur_fld 1]] [! fld_count [+ fld_count 1]] [! fp [+ fp 1]]]] [@@! rec_sizes rec_count cur_fld] [! fk fld_start_idx] [W [< fk fld_count] [D [@@! fld_sizes fk cur_fld] [! fk [+ fk 1]]]] [! rec_count [+ rec_count 1]]] [D [@@!.Main:mstart mains main_count j] [@@!.Main:mend mains main_count form_end] [! main_count [+ main_count 1]]]]] [! j [+ form_end 1]]] [D [@@!.Main:mstart mains main_count j] [@@!.Main:mend mains main_count j] [! main_count [+ main_count 1]] [! j [+ j 1]]]]]
 
 // --- stage 4: per-function param parsing + declared-variable collection --
 // For each function record from stage 3, parse its parameter list (each
@@ -1234,10 +1693,10 @@
 [! fend 0]
 [! qi 0]
 [W [< fi func_count] [D
-  [! po [@@ funcs [+ [* fi 4] 2]]]
-  [! fend [@@ funcs [+ [* fi 4] 3]]]
+  [! po [@@.Func:params_open_tok funcs fi]]
+  [! fend [@@.Func:form_end funcs fi]]
   [! pc [@@ match po]]
-  [! span [+ [- fend [@@ funcs [* fi 4]]] 1]]
+  [! span [+ [- fend [@@.Func:form_start funcs fi]] 1]]
   [! pbuf [H [* span 16]]]
   [! dbuf [H [* span 16]]]
   [! pcnt 0]
@@ -1258,7 +1717,12 @@
   [W [< b fend] [D
     [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] fend] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
       [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
-      [D]]
+      [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] fend] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 2] [&& [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 64] [== [@ src [+ [@@ tokens [+ [* [+ b 1] 3] 1]] 1]] 62]]]]]]
+        [D
+          [! mvtok [get_map_var_tok tokens match b]]
+          [? [!= mvtok -1] [! dcnt [decl_add src dbuf dcnt [@@ tokens [+ [* mvtok 3] 1]] [@@ tokens [+ [* mvtok 3] 2]]]] [D]]
+        ]
+        [D]]]
     [! b [+ b 1]]
   ]]
   [sort_decls src dbuf pcnt dcnt]
@@ -1273,7 +1737,7 @@
   [@@$! fn_decl_buf fi dbuf]
   [@@! fn_decl_count fi dcnt]
   [@@$! fn_type_buf fi tbuf]
-  [! nt [@@ funcs [+ [* fi 4] 1]]]
+  [! nt [@@.Func:name_tok funcs fi]]
   [@@! fn_ret_is_str fi [? [== [@@ tokens [* nt 3]] 1] 1 0]]
   [! fi [+ fi 1]]
 ]]
@@ -1283,33 +1747,34 @@
 // excluding all function bodies).
 [! main_decl [H [* [+ tok_count 1] 16]]]
 [! main_decl_count 0]
-[! mi 0]
 [! mstart 0]
 [! mend 0]
-[W [< mi main_count] [D
-  [! mstart [@@ mains [* mi 2]]]
-  [! mend [@@ mains [+ [* mi 2] 1]]]
+[@> main_count [mi] [D
+  [! mstart [@@.Main:mstart mains mi]]
+  [! mend [@@.Main:mend mains mi]]
   [! b mstart]
   [W [<= b mend] [D
     [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] tok_count] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 1] [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 33]]]]]
       [! main_decl_count [decl_add src main_decl main_decl_count [@@ tokens [+ [* [+ b 2] 3] 1]] [@@ tokens [+ [* [+ b 2] 3] 2]]]]
-      [D]]
+      [? [&& [== [@@ tokens [* b 3]] 1] [&& [< [+ b 1] tok_count] [&& [== [@@ tokens [* [+ b 1] 3]] 3] [&& [== [@@ tokens [+ [* [+ b 1] 3] 2]] 2] [&& [== [@ src [@@ tokens [+ [* [+ b 1] 3] 1]]] 64] [== [@ src [+ [@@ tokens [+ [* [+ b 1] 3] 1]] 1]] 62]]]]]]
+        [D
+          [! mvtok [get_map_var_tok tokens match b]]
+          [? [!= mvtok -1] [! main_decl_count [decl_add src main_decl main_decl_count [@@ tokens [+ [* mvtok 3] 1]] [@@ tokens [+ [* mvtok 3] 2]]]] [D]]
+        ]
+        [D]]]
     [! b [+ b 1]]
   ]]
-  [! mi [+ mi 1]]
 ]]
 [sort_decls src main_decl 0 main_decl_count]
 
 [. "FUNC_COUNT" func_count]
 [. "MAIN_COUNT" main_count]
-[! fi 0]
-[W [< fi func_count] [D
-  [! name_tok [@@ funcs [+ [* fi 4] 1]]]
+[@> func_count [fi] [D
+  [! name_tok [@@.Func:name_tok funcs fi]]
   [? [== [@@ tokens [* name_tok 3]] 3]
     [! fname [slice_str src [@@ tokens [+ [* name_tok 3] 1]] [@@ tokens [+ [* name_tok 3] 2]]]]
     [! fname "(complex-name)"]]
   [. "FUNC" fi fname "params=" [@@ fn_param_count fi] "declared=" [@@ fn_decl_count fi]]
-  [! fi [+ fi 1]]
 ]]
 [. "MAIN_DECLARED" main_decl_count]
 
@@ -1317,23 +1782,20 @@
 // histogram by code. STMT_UNKNOWN(-1) must be 0 for a real program - any
 // nonzero there is either a malformed statement or a genuinely unhandled
 // symbol, both worth knowing about before codegen is attempted.
-[D [! hist [H [* 26 8]]] [! mi 0] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]] [! mi [+ mi 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]] [. "STMT_A=" [@@ hist 25]]]
+[D [! hist [H [* 35 8]]] [! mstart 0] [! mend 0] [! code 0] [! idx 0] [@> main_count [mi] [D [! mstart [@@.Main:mstart mains mi]] [! mend [@@.Main:mend mains mi]] [! code [classify_stmt tokens src funcs func_count mstart mend]] [! idx [+ code 2]] [@@! hist idx [+ [@@ hist idx] 1]]]] [. "STMT_UNKNOWN(-1)=" [@@ hist 1]] [. "STMT_CALL(0)=" [@@ hist 2]] [. "STMT_DOT(.)=" [@@ hist 3]] [. "STMT_ASSIGN(!)=" [@@ hist 4]] [. "STMT_IF(?)=" [@@ hist 5]] [. "STMT_WHILE(W)=" [@@ hist 6]] [. "STMT_DO(D)=" [@@ hist 7]] [. "STMT_RETURN(^)=" [@@ hist 8]] [. "STMT_BYTEOP(@)=" [@@ hist 9]] [. "STMT_BYTESET(@!)=" [@@ hist 10]] [. "STMT_WORDOP(@@)=" [@@ hist 11]] [. "STMT_WORDSET(@@!)=" [@@ hist 12]] [. "STMT_WORDPTR(@@$)=" [@@ hist 13]] [. "STMT_WORDPTRSET(@@$!)=" [@@ hist 14]] [. "STMT_H=" [@@ hist 15]] [. "STMT_L=" [@@ hist 16]] [. "STMT_N=" [@@ hist 17]] [. "STMT_V=" [@@ hist 18]] [. "STMT_O=" [@@ hist 19]] [. "STMT_Z=" [@@ hist 20]] [. "STMT_R=" [@@ hist 21]] [. "STMT_K=" [@@ hist 22]] [. "STMT_X=" [@@ hist 23]] [. "STMT_SECTIONDEF(section)=" [@@ hist 24]] [. "STMT_A=" [@@ hist 25]] [. "STMT_I=" [@@ hist 26]] [. "STMT_F=" [@@ hist 27]] [. "STMT_T=" [@@ hist 28]]]
 
 // --- stage 6a driver: full-depth statement histogram ----------------------
 // Same buckets as stage 5's, plus index 0 for "structurally unrecognized /
 // could be a call, classify_op_only can't tell" (see comment above that
 // function) - stage 5's own top-level counts above are unaffected by this.
-[! hist2 [H [* 26 8]]]
-[! mi 0]
-[W [< mi main_count] [D [! mstart [@@ mains [* mi 2]]] [! mend [@@ mains [+ [* mi 2] 1]]] [recurse_stmt tokens match src mstart mend hist2] [! mi [+ mi 1]]]]
-[! fi 0]
-[W [< fi func_count] [D
-  [! po2 [@@ funcs [+ [* fi 4] 2]]]
-  [! fend2 [@@ funcs [+ [* fi 4] 3]]]
+[! hist2 [H [* 35 8]]]
+[@> main_count [mi] [D [! mstart [@@.Main:mstart mains mi]] [! mend [@@.Main:mend mains mi]] [recurse_stmt tokens match src mstart mend hist2]]]
+[@> func_count [fi] [D
+  [! po2 [@@.Func:params_open_tok funcs fi]]
+  [! fend2 [@@.Func:form_end funcs fi]]
   [! pc2 [@@ match po2]]
   [! b2 [+ pc2 1]]
   [W [< b2 fend2] [D [! ce2 [next_child_end tokens match b2]] [recurse_stmt tokens match src b2 ce2 hist2] [! b2 [+ ce2 1]]]]
-  [! fi [+ fi 1]]
 ]]
 [. "=== stage 6a: full-depth histogram (main + every function body, all nesting) ==="]
 [. "ALL_CALL_OR_UNKNOWN(no-fn-check)=" [@@ hist2 0]]
@@ -1361,29 +1823,24 @@
 // self-hosting compiler needs to be able to run on its own source.
 [! outbuf [H [* [* tok_count 2] 8]]]
 [! total_reads 0] [! total_resolved 0] [! total_unresolved 0]
-[! mi 0]
-[W [< mi main_count] [D
-  [! mstart [@@ mains [* mi 2]]]
+[@> main_count [mi] [D
+  [! mstart [@@.Main:mstart mains mi]]
   [! oc [collect_reads tokens match src mstart outbuf 0]]
-  [! ri 0]
-  [W [< ri oc] [D
+  [@> oc [ri] [D
     [! rst [@@ outbuf [* ri 2]]] [! rln [@@ outbuf [+ [* ri 2] 1]]]
     [! total_reads [+ total_reads 1]]
     [? [decl_contains src main_decl main_decl_count rst rln]
       [! total_resolved [+ total_resolved 1]]
-      [D [! total_unresolved [+ total_unresolved 1]] [. "SemanticError: unresolved read in main at byte" rst "len" rln]]]
-    [! ri [+ ri 1]]
+      [D [! total_unresolved [+ total_unresolved 1]] [. "[ERR :code 201 :kind SEMANTIC :msg UNRESOLVED_READ :byte" rst ":len" rln "]"]]]
   ]]
-  [! mi [+ mi 1]]
 ]]
 [. "=== stage 6b: read validation, main ==="]
 [. "MAIN_READS_TOTAL=" total_reads "RESOLVED=" total_resolved "UNRESOLVED=" total_unresolved]
 
-[! fi 0]
 [! fn_reads_total 0] [! fn_reads_resolved 0] [! fn_reads_unresolved 0]
-[W [< fi func_count] [D
-  [! po3 [@@ funcs [+ [* fi 4] 2]]]
-  [! fend3 [@@ funcs [+ [* fi 4] 3]]]
+[@> func_count [fi] [D
+  [! po3 [@@.Func:params_open_tok funcs fi]]
+  [! fend3 [@@.Func:form_end funcs fi]]
   [! pc3 [@@ match po3]]
   [! b3 [+ pc3 1]]
   [! dbuf3 [@@$ fn_decl_buf fi]]
@@ -1391,18 +1848,15 @@
   [W [< b3 fend3] [D
     [! ce3 [next_child_end tokens match b3]]
     [! oc3 [collect_reads tokens match src b3 outbuf 0]]
-    [! ri3 0]
-    [W [< ri3 oc3] [D
+    [@> oc3 [ri3] [D
       [! rst3 [@@ outbuf [* ri3 2]]] [! rln3 [@@ outbuf [+ [* ri3 2] 1]]]
       [! fn_reads_total [+ fn_reads_total 1]]
       [? [decl_contains src dbuf3 dcount3 rst3 rln3]
         [! fn_reads_resolved [+ fn_reads_resolved 1]]
-        [D [! fn_reads_unresolved [+ fn_reads_unresolved 1]] [. "SemanticError: unresolved read in fn" fi "at byte" rst3 "len" rln3]]]
-      [! ri3 [+ ri3 1]]
+        [D [! fn_reads_unresolved [+ fn_reads_unresolved 1]] [. "[ERR :code 202 :kind SEMANTIC :msg UNRESOLVED_READ :fn" fi ":byte" rst3 ":len" rln3 "]"]]]
     ]]
     [! b3 [+ ce3 1]]
   ]]
-  [! fi [+ fi 1]]
 ]]
 [. "=== stage 6b: read validation, functions ==="]
 [. "FN_READS_TOTAL=" fn_reads_total "RESOLVED=" fn_reads_resolved "UNRESOLVED=" fn_reads_unresolved]
@@ -1414,7 +1868,7 @@
 [! cg_main_types [H [* [+ main_decl_count 1] 8]]]
 [! cg_bodyh [O "out_body.s" "w"]]
 [! cg_str_values [H [* [+ tok_count 1] 8]]]
-[! cgctx [H 120]]
+[! cgctx [H 200]]
 [@@! cgctx 0 cg_bodyh]
 [@@! cgctx 1 0]
 [@@$! cgctx 2 main_decl]
@@ -1422,7 +1876,7 @@
 [@@$! cgctx 4 funcs]
 [@@$! cgctx 5 fn_param_count]
 [@@! cgctx 6 func_count]
-[@@$! cgctx 7 ".Lret_test"]
+[@@$! cgctx 7 ".Lmain_ret"]
 [@@! cgctx 8 0]
 [@@$! cgctx 9 fn_ret_is_str]
 [@@! cgctx 10 -1]
@@ -1430,23 +1884,28 @@
 [@@$! cgctx 12 cg_main_types]
 [@@! cgctx 13 0]
 [@@! cgctx 14 0]
+[@@$! cgctx 15 rec_names]
+[@@$! cgctx 16 rec_sizes]
+[@@! cgctx 17 rec_count]
+[@@$! cgctx 18 fld_names]
+[@@$! cgctx 19 fld_offsets]
+[@@$! cgctx 20 fld_sizes]
+[@@$! cgctx 21 fld_recs]
+[@@! cgctx 22 fld_count]
 
-[! cg_mi 0]
-[W [< cg_mi main_count] [D
-  [! cg_mstart [@@ mains [* cg_mi 2]]]
+[@> main_count [cg_mi] [D
+  [! cg_mstart [@@.Main:mstart mains cg_mi]]
   [infer_stmt_types tokens match src cg_mstart cgctx]
-  [! cg_mi [+ cg_mi 1]]
 ]]
 
-[! cg_fi 0]
-[W [< cg_fi func_count] [D
+[@> func_count [cg_fi] [D
   [! cg_tbuf [@@$ fn_type_buf cg_fi]]
   [@@$! cgctx 2 [@@$ fn_decl_buf cg_fi]]
   [@@! cgctx 3 [@@ fn_decl_count cg_fi]]
   [@@$! cgctx 12 cg_tbuf]
   [@@! cgctx 10 cg_fi]
-  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
-  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_po [@@.Func:params_open_tok funcs cg_fi]]
+  [! cg_fend [@@.Func:form_end funcs cg_fi]]
   [! cg_pc [@@ match cg_po]]
   [! cg_b [+ cg_pc 1]]
   [W [< cg_b cg_fend] [D
@@ -1454,7 +1913,6 @@
     [infer_stmt_types tokens match src cg_b cgctx]
     [! cg_b [+ cg_ce 1]]
   ]]
-  [! cg_fi [+ cg_fi 1]]
 ]]
 
 [@@$! cgctx 2 main_decl]
@@ -1463,17 +1921,14 @@
 [@@! cgctx 10 -1]
 [emit_main_prologue cg_bodyh [frame_size_for main_decl_count]]
 [emit_zero_slots cg_bodyh main_decl_count]
-[! cg_mi 0]
-[W [< cg_mi main_count] [D
-  [! cg_mstart [@@ mains [* cg_mi 2]]]
+[@> main_count [cg_mi] [D
+  [! cg_mstart [@@.Main:mstart mains cg_mi]]
   [emit_stmt tokens match src cg_mstart cgctx]
-  [! cg_mi [+ cg_mi 1]]
 ]]
 [emit_main_epilogue cg_bodyh]
 [? [> func_count 0] [K cg_bodyh "\n"] [D]]
 
-[! cg_fi 0]
-[W [< cg_fi func_count] [D
+[@> func_count [cg_fi] [D
   [! cg_dbuf [@@$ fn_decl_buf cg_fi]]
   [! cg_dcount [@@ fn_decl_count cg_fi]]
   [! cg_pcount [@@ fn_param_count cg_fi]]
@@ -1485,8 +1940,8 @@
   [emit_function_prologue tokens src funcs cg_fi cg_bodyh [frame_size_for cg_dcount]]
   [? [== cg_pcount 0] [K cg_bodyh "\n"] [emit_arg_copies cg_bodyh cg_pcount]]
   [? [== cg_pcount cg_dcount] [K cg_bodyh "\n"] [emit_zero_slots_from cg_bodyh cg_pcount cg_dcount]]
-  [! cg_po [@@ funcs [+ [* cg_fi 4] 2]]]
-  [! cg_fend [@@ funcs [+ [* cg_fi 4] 3]]]
+  [! cg_po [@@.Func:params_open_tok funcs cg_fi]]
+  [! cg_fend [@@.Func:form_end funcs cg_fi]]
   [! cg_pc [@@ match cg_po]]
   [! cg_b [+ cg_pc 1]]
   [W [< cg_b cg_fend] [D
@@ -1496,7 +1951,6 @@
   ]]
   [emit_function_epilogue tokens src funcs cg_fi cg_bodyh]
   [? [< [+ cg_fi 1] func_count] [K cg_bodyh "\n"] [D]]
-  [! cg_fi [+ cg_fi 1]]
 ]]
 [X cg_bodyh]
 
