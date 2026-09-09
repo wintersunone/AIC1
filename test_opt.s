@@ -29,6 +29,10 @@ aicstr_7:
     .string "Slice 2:"
 aicstr_8:
     .string "Slice 3:"
+divzero_msg:
+    .string "[ERR :code 502 :kind RUNTIME :msg DIVISION_BY_ZERO]\n"
+divzero_msg_end:
+    .equ divzero_len, divzero_msg_end - divzero_msg - 1
 
 runtimeerr_msg:
     .string "[ERR :code 501 :kind RUNTIME :msg IO_OR_ALLOC_FAILED]\n"
@@ -50,25 +54,6 @@ aic_main:
     movq    $0, -56(%rbp)
     movq    $0, -64(%rbp)
     movq    $0, -72(%rbp)
-    movq    $10, %rax
-    pushq   %rax
-    movq    $20, %rax
-    pushq   %rax
-    movq    $30, %rax
-    pushq   %rax
-    movq    $25, %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok1
-    jmp     .Lruntimeerror
-.Lallocok1:
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
     movq    %rax, -48(%rbp)
     leaq    aicstr_0(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
@@ -93,25 +78,6 @@ aic_main:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    movq    $40, %rax
-    pushq   %rax
-    movq    $50, %rax
-    pushq   %rax
-    movq    $60, %rax
-    pushq   %rax
-    movq    $25, %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok2
-    jmp     .Lruntimeerror
-.Lallocok2:
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
     movq    %rax, -56(%rbp)
     leaq    aicstr_1(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
@@ -136,25 +102,6 @@ aic_main:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    movq    $70, %rax
-    pushq   %rax
-    movq    $80, %rax
-    pushq   %rax
-    movq    $90, %rax
-    pushq   %rax
-    movq    $25, %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok3
-    jmp     .Lruntimeerror
-.Lallocok3:
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
     movq    %rax, -64(%rbp)
     leaq    aicstr_2(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
@@ -184,64 +131,10 @@ aic_main:
     movq    $1, %rsi
     call    aic_calloc
     testq   %rax, %rax
-    jne     .Lallocok4
+    jne     .Lallocok1
     jmp     .Lruntimeerror
-.Lallocok4:
+.Lallocok1:
     movq    %rax, -72(%rbp)
-    movq    $111, %rax
-    pushq   %rax
-    movq    $222, %rax
-    pushq   %rax
-    movq    $333, %rax
-    pushq   %rax
-    movq    -72(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    popq    %rbx
-    imulq   $24, %rax
-    addq    %rbx, %rax
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
-    movq    $444, %rax
-    pushq   %rax
-    movq    $555, %rax
-    pushq   %rax
-    movq    $666, %rax
-    pushq   %rax
-    movq    -72(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    popq    %rbx
-    imulq   $24, %rax
-    addq    %rbx, %rax
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
-    movq    $777, %rax
-    pushq   %rax
-    movq    $888, %rax
-    pushq   %rax
-    movq    $999, %rax
-    pushq   %rax
-    movq    -72(%rbp), %rax
-    pushq   %rax
-    movq    $2, %rax
-    popq    %rbx
-    imulq   $24, %rax
-    addq    %rbx, %rax
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
     leaq    aicstr_3(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
     movq    %rax, %rsi
@@ -270,23 +163,10 @@ aic_main:
     movq    $1, %rsi
     call    aic_calloc
     testq   %rax, %rax
-    jne     .Lallocok5
+    jne     .Lallocok2
     jmp     .Lruntimeerror
-.Lallocok5:
+.Lallocok2:
     movq    %rax, -16(%rbp)
-    movq    $987, %rax
-    pushq   %rax
-    movq    $654, %rax
-    pushq   %rax
-    movq    $321, %rax
-    pushq   %rax
-    movq    -16(%rbp), %rax
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
     leaq    aicstr_4(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
     movq    %rax, %rsi
@@ -315,71 +195,38 @@ aic_main:
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
-    pushq   %rax
-    movq    $5, %rax
-    pushq   %rax
-    movq    %rax, %rdi
-    incq    %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok6
-    jmp     .Lruntimeerror
-.Lallocok6:
-    popq    %rcx
-    popq    %rbx
-    popq    %rsi
-    addq    %rbx, %rsi
-    movq    %rax, %rdi
-    pushq   %rax
-    rep movsb
+    movq    %rax, %rbx
     popq    %rax
+    testq   %rbx, %rbx
+    jne     .Ldivok3
+    jmp     .Ldivzero
+.Ldivok3:
+    cqto
+    idivq   %rbx
     movq    %rax, -24(%rbp)
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    $7, %rax
-    pushq   %rax
-    movq    $11, %rax
-    pushq   %rax
-    movq    %rax, %rdi
-    incq    %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok7
-    jmp     .Lruntimeerror
-.Lallocok7:
-    popq    %rcx
-    popq    %rbx
-    popq    %rsi
-    addq    %rbx, %rsi
-    movq    %rax, %rdi
-    pushq   %rax
-    rep movsb
+    movq    %rax, %rbx
     popq    %rax
+    testq   %rbx, %rbx
+    jne     .Ldivok4
+    jmp     .Ldivzero
+.Ldivok4:
+    cqto
+    idivq   %rbx
     movq    %rax, -32(%rbp)
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    $19, %rax
-    pushq   %rax
-    movq    $11, %rax
-    pushq   %rax
-    movq    %rax, %rdi
-    incq    %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok8
-    jmp     .Lruntimeerror
-.Lallocok8:
-    popq    %rcx
-    popq    %rbx
-    popq    %rsi
-    addq    %rbx, %rsi
-    movq    %rax, %rdi
-    pushq   %rax
-    rep movsb
+    movq    %rax, %rbx
     popq    %rax
+    testq   %rbx, %rbx
+    jne     .Ldivok5
+    jmp     .Ldivzero
+.Ldivok5:
+    cqto
+    idivq   %rbx
     movq    %rax, -40(%rbp)
     leaq    aicstr_6(%rip), %rax
     leaq    fmt_s_sp(%rip), %rdi
@@ -387,7 +234,7 @@ aic_main:
     xorl    %eax, %eax
     call    aic_printf
     movq    -24(%rbp), %rax
-    leaq    fmt_s_nl(%rip), %rdi
+    leaq    fmt_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
@@ -397,7 +244,7 @@ aic_main:
     xorl    %eax, %eax
     call    aic_printf
     movq    -32(%rbp), %rax
-    leaq    fmt_s_nl(%rip), %rdi
+    leaq    fmt_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
@@ -407,7 +254,7 @@ aic_main:
     xorl    %eax, %eax
     call    aic_printf
     movq    -40(%rbp), %rax
-    leaq    fmt_s_nl(%rip), %rdi
+    leaq    fmt_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
@@ -417,6 +264,10 @@ aic_main:
     ret
 
 
+.Ldivzero:
+    leaq    divzero_msg(%rip), %rsi
+    movq    %rsi, %rdi
+    call    aic_runtime_error
 
 
 .Lruntimeerror:

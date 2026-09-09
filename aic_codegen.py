@@ -842,6 +842,12 @@ class Codegen:
             if _is_record_op(op):
                 is_ptr = op.startswith("@@$.") or op.startswith("@@$!.")
                 return STR if is_ptr else INT
+            if op == "/" and len(node) == 4:
+                return STR
+            if op in self.analyzer.records or (op.startswith("#") and op[1:] in self.analyzer.records):
+                return STR
+            if op == "#" and len(node) > 1 and _op_name(node[1]) in self.analyzer.records:
+                return STR
             if op == "?":
                 return self._static_type(node[2])
         return INT

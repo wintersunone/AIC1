@@ -62,9 +62,9 @@ aicstr_23:
 aicstr_24:
     .string " | "
 aicstr_25:
-    .string "---+---+---"
+    .string "- - -+- - -+- - -"
 runtimeerr_msg:
-    .string "AIC Runtime Error: a file or memory operation failed (open/allocate)\n"
+    .string "[ERR :code 501 :kind RUNTIME :msg IO_OR_ALLOC_FAILED]\n"
 runtimeerr_msg_end:
     .equ runtimeerr_len, runtimeerr_msg_end - runtimeerr_msg - 1
 
@@ -355,6 +355,7 @@ aic_main:
     xorl    %eax, %eax
     call    aic_printf
     movq    $0, %rax
+.Lmain_ret:
     leave
     ret
 
