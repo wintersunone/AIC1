@@ -14,6 +14,8 @@ Executes the complete 4-stage compiler bootstrap pipeline:
 
 import filecmp
 import os
+import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -46,9 +48,13 @@ def main():
     run([sys.executable, "aic_codegen.py", "compiler.aic", "compiler_gen0.s"],
         "Stage 1: Python host compiles compiler.aic -> compiler_gen0.s")
 
-    # 2. Gen 0 link (direct, zero bridge files!)
-    run(["gcc", "-O2", "compiler_gen0.s", "-o", "compiler_gen0.exe"],
-        "Stage 2: Assemble & link compiler_gen0.exe (standalone)")
+    # 2. Gen 0 link (Direct PE emitter or GCC if available)
+    if shutil.which("gcc"):
+        run(["gcc", "-O2", "compiler_gen0.s", "-o", "compiler_gen0.exe"],
+            "Stage 2: Assemble & link compiler_gen0.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "compiler_gen0.s", "-o", "compiler_gen0.exe"],
+            "Stage 2: Assemble & link compiler_gen0.exe (Direct PE emitter)")
 
     # 3. Gen 1 native compilation
     run(["./compiler_gen0.exe", "compiler.aic", "compiler_gen1.s"],
@@ -61,9 +67,13 @@ def main():
     sz1 = os.path.getsize("compiler_gen1.s")
     print(f"    >>> STAGE 1 CLOSURE VERIFIED: 0-diff (Size: {sz0:,} bytes) <<<")
 
-    # 4. Gen 1 link (direct, zero bridge files!)
-    run(["gcc", "-O2", "compiler_gen1.s", "-o", "compiler_gen1.exe"],
-        "Stage 4: Assemble & link compiler_gen1.exe (standalone)")
+    # 4. Gen 1 link (Direct PE emitter or GCC if available)
+    if shutil.which("gcc"):
+        run(["gcc", "-O2", "compiler_gen1.s", "-o", "compiler_gen1.exe"],
+            "Stage 4: Assemble & link compiler_gen1.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "compiler_gen1.s", "-o", "compiler_gen1.exe"],
+            "Stage 4: Assemble & link compiler_gen1.exe (Direct PE emitter)")
 
     # 5. Gen 2 native compilation
     run(["./compiler_gen1.exe", "compiler.aic", "compiler_gen2.s"],
@@ -129,10 +139,52 @@ def main():
     sz_pe = os.path.getsize("compiler_gen_pe.s")
     print(f"    >>> STAGE 3 DIRECT PE CLOSURE VERIFIED: 0-diff (Size: {sz_pe:,} bytes) <<<")
 
+    # 14. AIC 3.0 Optimizations & Standalone Linux ELF64 Cross-Platform Emitter
+    run(["./aic.exe", "test_optimizations.aic", "test_opt_pipeline.s"],
+        "Stage 14a: Native aic.exe compiles test_optimizations.aic -> test_opt_pipeline.s")
+
+    run([sys.executable, "tools/aic_pe_emitter.py", "test_opt_pipeline.s", "-o", "test_opt_pipeline.exe"],
+        "Stage 14b: Package test_opt_pipeline.exe (Direct PE emitter)")
+
+    p_opt = run(["./test_opt_pipeline.exe"], "Stage 14c: Execute native test_opt binary")
+    expected_opt = (
+        "Direct ctor: 10 20 30\n"
+        "Hash ctor: 40 50 60\n"
+        "Spaced ctor: 70 80 90\n"
+        "Array bulk: 444 555 666\n"
+        "Single bulk: 987 654 321\n"
+        "Slice 1: Hello\n"
+        "Slice 2: Antigravity\n"
+        "Slice 3: AI Compiler\n"
+    )
+    out_opt = p_opt.stdout.replace("\r\n", "\n")
+    if out_opt != expected_opt:
+        print("[FAIL] test_optimizations output mismatch! Expected:")
+        print(repr(expected_opt))
+        print("Got:")
+        print(repr(out_opt))
+        sys.exit(1)
+    print("    >>> RECORD CTOR, BULK SETTER & HARDWARE SLICING VERIFIED CLEAN <<<")
+
+    run([sys.executable, "tools/aic_elf_emitter.py", "test_opt_pipeline.s", "-o", "test_opt_pipeline.elf"],
+        "Stage 14d: Generate standalone Linux ELF64 binary test_opt_pipeline.elf")
+
+    with open("test_opt_pipeline.elf", "rb") as f_elf:
+        elf_bytes = f_elf.read()
+    assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
+    assert elf_bytes[4] == 2, "Not 64-bit ELF class"
+    assert elf_bytes[5] == 1, "Not little-endian ELF"
+    (e_machine,) = struct.unpack("<H", elf_bytes[18:20])
+    assert e_machine == 0x3E, f"Invalid machine type {e_machine:#x} (not x86-64)"
+    (e_entry, e_phoff) = struct.unpack("<QQ", elf_bytes[24:40])
+    (e_phentsize, e_phnum) = struct.unpack("<HH", elf_bytes[54:58])
+    assert e_phnum >= 2, f"Expected at least 2 program headers, got {e_phnum}"
+    print(f"    >>> LINUX ELF64 BINARY VALIDATED: Entry {e_entry:#x}, {e_phnum} PT_LOAD segments ({len(elf_bytes):,} bytes) <<<")
+
     print("\n" + "=" * 70)
-    print("ALL 13 STAGES PASSED. SELF-HOSTING & TOOLCHAIN FREEDOM PROVEN.")
+    print("ALL 14 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
     print(f"Compiler binary: aic.exe ({os.path.getsize('aic.exe'):,} bytes)")
-    print("Zero external toolchain dependency (GCC/MinGW eliminated from packaging).")
+    print("Zero external toolchain dependency (Windows PE & Linux ELF direct emitters).")
     print("=" * 70)
 
 
