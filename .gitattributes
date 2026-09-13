@@ -1,0 +1,6 @@
+# Enforce LF line endings across all platforms for AIC bitwise reproducibility
+* text=auto eol=lf
+*.s text eol=lf
+*.aic text eol=lf
+*.py text eol=lf
+*.md text eol=lf
