@@ -32,3 +32,11 @@
 [. "Slice 1:" s1]
 [. "Slice 2:" s2]
 [. "Slice 3:" s3]
+
+// 7. Stack-spilled parameters (>6 parameters)
+[: sum8 [a b c d e f g h] [D
+  [^ [+ [+ [+ [+ [+ [+ [+ a b] c] d] e] f] g] h]]
+]]
+[! s8 [sum8 1 2 3 4 5 6 7 8]]
+[. "Sum 8:" s8]
+

@@ -121,7 +121,7 @@ _LIBC_STR_RETURN = {"H", "R", "N", "A"}                           # the rest ret
 _RESERVED_NAMES = (_STMT_OPS | _CMP_OP_NAMES | set(_BYTE_OPS) | set(_WORD_OPS)
                     | set(_LIBC_OPS) | {"^", "§", ":"})
 _ARG_REGS = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
-_MAX_PARAMS = len(_ARG_REGS)
+_MAX_PARAMS = 64
 
 INT, STR = "int", "str"
 
@@ -950,12 +950,31 @@ class Codegen:
 
         if op in self.functions:
             fn = self.functions[op]
-            for arg in node[1:]:
-                self.compile_expr(arg)
-                self.emit("    pushq   %rax")
-            for i in range(len(fn.params) - 1, -1, -1):
-                self.emit(f"    popq    {_ARG_REGS[i]}")
-            self.emit(f"    call    {fn.label}")
+            num_params = len(fn.params)
+            num_regs = len(_ARG_REGS)
+            if num_params <= num_regs:
+                for arg in node[1:]:
+                    self.compile_expr(arg)
+                    self.emit("    pushq   %rax")
+                for i in range(num_params - 1, -1, -1):
+                    self.emit(f"    popq    {_ARG_REGS[i]}")
+                self.emit(f"    call    {fn.label}")
+            else:
+                num_stack = num_params - num_regs
+                pad = 1 if (num_stack % 2 != 0) else 0
+                if pad:
+                    self.emit("    subq    $8, %rsp")
+                for i in range(num_params - 1, num_regs - 1, -1):
+                    self.compile_expr(node[1 + i])
+                    self.emit("    pushq   %rax")
+                for i in range(num_regs):
+                    self.compile_expr(node[1 + i])
+                    self.emit("    pushq   %rax")
+                for i in range(num_regs - 1, -1, -1):
+                    self.emit(f"    popq    {_ARG_REGS[i]}")
+                self.emit(f"    call    {fn.label}")
+                stack_cleanup = (num_stack + pad) * 8
+                self.emit(f"    addq    ${stack_cleanup}, %rsp")
             return
 
         if op in _BYTE_OPS:
@@ -1524,9 +1543,16 @@ aic_main:
         body = "\n".join(self.lines)
         self.lines = []
         frame_size, zero_init = self._frame_and_zeroinit(fn.slots, set(fn.params))
-        arg_copy = "\n".join(
-            f"    movq    {_ARG_REGS[i]}, {-8 * (i + 1)}(%rbp)" for i in range(len(fn.params))
-        )
+        arg_copy_lines = []
+        for i in range(len(fn.params)):
+            slot_off = -8 * (i + 1)
+            if i < len(_ARG_REGS):
+                arg_copy_lines.append(f"    movq    {_ARG_REGS[i]}, {slot_off}(%rbp)")
+            else:
+                stack_off = 16 + (i - len(_ARG_REGS)) * 8
+                arg_copy_lines.append(f"    movq    {stack_off}(%rbp), %rax")
+                arg_copy_lines.append(f"    movq    %rax, {slot_off}(%rbp)")
+        arg_copy = "\n".join(arg_copy_lines)
         return f"""\
 {fn.label}:
     pushq   %rbp
