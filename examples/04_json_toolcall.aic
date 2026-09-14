@@ -1,0 +1,36 @@
+// examples/04_json_toolcall.aic
+// Pure-AIC JSON parser, serializer, and tool-call payload handling
+
+[import "lib/json.aic"]
+
+[. "--- Pure-AIC JSON Tool-Calling Pipeline ---\n"]
+
+// 1. Build an AI Tool-Call Request Object
+[! req [json_obj]]
+[json_obj_set req "tool" [json_str "code_runner"]]
+[json_obj_set req "version" [json_int 5]]
+[json_obj_set req "sandboxed" [json_bool 1]]
+
+// 2. Add an Arguments Array
+[! args_arr [json_arr]]
+[json_arr_push args_arr [json_str "compile"]]
+[json_arr_push args_arr [json_str "execute"]]
+[json_arr_push args_arr [json_int 100]]
+[json_obj_set req "arguments" args_arr]
+
+// 3. Serialize to JSON String
+[! json_payload [json_stringify req]]
+[. "Serialized Payload:\n" json_payload "\n\n"]
+
+// 4. Parse the JSON String Back into Structured S-Records
+[! parsed_root [json_parse json_payload]]
+
+// 5. Inspect Fields
+[! tool_val [json_obj_get parsed_root "tool"]]
+[! ver_val [json_obj_get parsed_root "version"]]
+[! sandbox_val [json_obj_get parsed_root "sandboxed"]]
+
+[. "Deserialized Inspection:\n"]
+[. "  Tool Name: " [json_get_str tool_val] "\n"]
+[. "  Version:   " [json_get_int ver_val] "\n"]
+[. "  Sandboxed: " [json_get_bool sandbox_val] "\n"]

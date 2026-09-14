@@ -1,0 +1,39 @@
+// examples/05_system_arena.aic
+// Linear bump memory allocation and safe file I/O in AIC
+
+[import "lib/arena.aic"]
+[import "lib/io.aic"]
+
+[. "--- Memory Arena & File I/O Demonstration ---\n"]
+
+// 1. Initialize a Linear Bump Memory Arena (16 KB capacity)
+[! mem [arena_new 16384]]
+[. "Allocated Arena with capacity: " [arena_cap mem] " bytes\n"]
+
+// 2. Fast Bump Allocation for 4 64-bit words (32 bytes)
+[! offset [arena_alloc_words mem 4]]
+[! buf [arena_buffer mem]]
+[@@! buf [+ offset 0] 1000]
+[@@! buf [+ offset 1] 2000]
+[@@! buf [+ offset 2] 3000]
+[@@! buf [+ offset 3] 4000]
+
+[. "Allocated words at offset " offset ", current used: " [arena_used mem] " bytes\n"]
+[. "  buf[0]=" [@@ buf [+ offset 0]] " buf[3]=" [@@ buf [+ offset 3]] "\n"]
+
+// 3. Instant Arena Reset (O(1) bulk deallocation)
+[arena_reset mem]
+[. "After arena_reset, used bytes: " [arena_used mem] "\n\n"]
+
+// 4. Safe File I/O
+[! filepath "example_output.txt"]
+[! content "AIC Native Systems Execution: Verified Clean.\n"]
+
+[! write_res [io_write_file filepath content]]
+[. "Wrote to " filepath " (bytes: " write_res ")\n"]
+
+[! exists [io_file_exists filepath]]
+[. "File exists check: " exists "\n"]
+
+[! read_back [io_read_file filepath]]
+[. "Content read back:\n  " read_back]

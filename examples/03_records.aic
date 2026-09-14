@@ -1,0 +1,27 @@
+// examples/03_records.aic
+// Zero-cost static S-records, structured memory, and field accessors in AIC
+
+// 1. Define S-Record Schema
+[:: Point x y]
+
+// 2. Instantiate Records via Automatic Constructors
+[! p1 [Point 10 20]]
+[! p2 [Point 30 40]]
+
+[. "--- S-Record Demonstration ---\n"]
+[. "p1 initial coordinates: (" [@@.Point:x p1] ", " [@@.Point:y p1] ")\n"]
+[. "p2 initial coordinates: (" [@@.Point:x p2] ", " [@@.Point:y p2] ")\n"]
+
+// 3. Mutate Single Field
+[@@!.Point:x p1 99]
+[. "p1 after mutating x:    (" [@@.Point:x p1] ", " [@@.Point:y p1] ")\n"]
+
+// 4. Bulk Field Update (contiguous quadword store)
+[@@!.Point p2 500 600]
+[. "p2 after bulk update:   (" [@@.Point:x p2] ", " [@@.Point:y p2] ")\n"]
+
+// 5. Compute Euclidean Manhattan Distance
+[! dx [- [@@.Point:x p2] [@@.Point:x p1]]]
+[! dy [- [@@.Point:y p2] [@@.Point:y p1]]]
+[! manhattan_dist [+ dx dy]]
+[. "Manhattan distance between p1 and p2: " manhattan_dist "\n"]

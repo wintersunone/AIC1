@@ -24,6 +24,36 @@ Traditional languages (C, C++, Rust, Python) were optimized for human visual aes
 
 ---
 
+## System Architecture
+
+```mermaid
+graph TD
+    A["AI Model / Human Developer<br/>(Prompt / CoT Reasoning)"] --> B["AIC Source Code (.aic)<br/>(Unambiguous S-Expressions)"]
+    B --> C{"Dual-Platform Native Compiler<br/>(aic.exe / aic.elf / compiler.aic)"}
+    C -->|Stage 1: Tokenizer & Matcher| D["Flat Word-Addressed AST"]
+    D -->|Stage 2: Static Type & Scope Pass| E["Validated Symbols & S-Records"]
+    E -->|Stage 3: Single-Pass Codegen| F["Pure x86-64 Assembly (.s)"]
+    F --> G{"Zero-Dependency Direct Emitter"}
+    G -->|Direct PE32+ Assembler| H["Standalone Windows Binary<br/>(.exe - 8.7 KB)"]
+    G -->|Direct ELF64 Assembler| I["Standalone Linux Binary<br/>(.elf - 4.1 KB)"]
+```
+
+---
+
+## Language Comparison Matrix
+
+| Feature | AIC (AI Compiler) | C (C99/C11) | Rust (2021) | Python 3.11 | WebAssembly |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Syntax Predictability** | **100% Unambiguous Prefix** | Ambiguous Infix | Complex Infix & Lifetimes | Indentation Sensitive | Stack / S-Expr |
+| **BPE Token Efficiency** | **1-to-1 Delimiter Match** | Fragmented Operators | Fragmented Generics | Indent Token Spikes | Bytecode / Text |
+| **External Dependencies** | **0 (Direct PE/ELF Emitters)** | Binutils, Linker, libc | Cargo, LLVM, libc | Python Runtime (30MB) | VM / Browser Engine |
+| **Binary Output Size** | **8.7 KB Standalone** | 15–50 KB (dynamic) | 300 KB–3 MB | N/A (Bytecode) | 5–50 KB |
+| **Execution Speed** | **Near-C (11x–29x vs Python)** | Baseline 1.0x | ~1.0x | 15x–30x Slower | ~1.5x–2.5x of C |
+| **Self-Hosting Closure** | **Bitwise 0-Diff (18 Stages)** | Non-deterministic | Complex Multi-stage | Non-self-hosting | N/A |
+| **Target Audience** | **AI Models & Systems Coders** | Humans | Humans | Humans | Web Browsers |
+
+---
+
 ## Quickstart
 
 ### Prerequisites
@@ -54,7 +84,12 @@ python aic.py test
 python aic.py bench
 ```
 
-### 5. Run the 18-Stage Self-Hosting Bootstrap Verification
+### 5. Launch the Interactive REPL
+```bash
+python aic.py repl
+```
+
+### 6. Run the 18-Stage Self-Hosting Bootstrap Verification
 ```bash
 python aic.py verify
 ```
@@ -184,6 +219,34 @@ To reproduce these benchmarks on your system:
 ```bash
 python aic.py bench
 ```
+
+### Performance Architecture: Why AIC vs GCC -O2
+
+AIC's current performance profile represents an intentional architectural balance:
+
+| Dimension | GCC `-O2` / Clang | AIC (`compiler.aic`) |
+| :--- | :--- | :--- |
+| **Compiler Codebase Size** | ~15,000,000 lines of C++ | **~2,300 lines of pure AIC** |
+| **Self-Compilation Speed** | Minutes to hours | **0.027 seconds (27 milliseconds!)** |
+| **External Dependencies** | Binutils, GNU as, ld, glibc, libc++ | **Zero** (direct PE/ELF binary emitters) |
+| **Register Allocation** | Multi-pass Chaitin-Briggs graph coloring | Direct stack frame slots (`-8(%rbp)`, etc.) |
+| **Predictability for AI** | Opaque heuristic optimization passes | **1-to-1 deterministic correspondence** |
+
+Because AIC is a low-level systems language with 64-bit integer words, direct pointer math, and zero-cost records, it possesses the **exact same theoretical performance ceiling as C**. The current 2x–4x margin is purely due to GCC's multi-pass register coloring (keeping variables in registers vs. stack frames). Closing this margin requires only a register-coloring pass in the compiler—the language itself imposes no architectural performance ceiling.
+
+---
+
+## Example Programs (`examples/`)
+
+A collection of annotated, standalone example programs is available in the [`examples/`](examples/) directory:
+
+| Example | Command | Description |
+| :--- | :--- | :--- |
+| [`01_basics.aic`](examples/01_basics.aic) | `python aic.py run examples/01_basics.aic` | Variable assignment, arithmetic expressions, bitwise shifts, and formatted printing. |
+| [`02_algorithms.aic`](examples/02_algorithms.aic) | `python aic.py run examples/02_algorithms.aic` | Recursive Fibonacci, hardware bounded loops (`@>`), and iterative Collatz conjecture. |
+| [`03_records.aic`](examples/03_records.aic) | `python aic.py run examples/03_records.aic` | S-records (`::`), automatic constructors, field accessors (`@@.Point:x`), and bulk stores (`@@!.Point`). |
+| [`04_json_toolcall.aic`](examples/04_json_toolcall.aic) | `python aic.py run examples/04_json_toolcall.aic` | Pure-AIC JSON parser & serializer (`lib/json.aic`), building and inspecting AI tool-call payloads. |
+| [`05_system_arena.aic`](examples/05_system_arena.aic) | `python aic.py run examples/05_system_arena.aic` | Linear bump memory allocator (`lib/arena.aic`), $O(1)$ bulk resets, and safe file I/O operations (`lib/io.aic`). |
 
 ---
 

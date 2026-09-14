@@ -140,6 +140,56 @@ def cmd_bench(args):
     import benchmarks.speed.run_speed_benchmarks as speed_bench
     speed_bench.main()
 
+def cmd_repl(args):
+    print("================================================================")
+    print("AIC (AI Compiler / AI C) Interactive REPL v5.0")
+    print("Type AIC expressions or statements. Type 'exit' or ':q' to quit.")
+    print("Example: [! x 10] [+ x 5]")
+    print("================================================================")
+    from compiler import tokenize, parse, eval_node, Scope, AICError, Symbol
+    env = Scope()
+    env.table["__name__"] = "__repl__"
+    buf = ""
+    while True:
+        try:
+            prompt = "... " if buf else "aic> "
+            try:
+                line = input(prompt)
+            except EOFError:
+                print()
+                break
+            line_str = line.strip()
+            if not buf and line_str in ("exit", "quit", ":q"):
+                break
+            if not line_str and not buf:
+                continue
+            buf += line + "\n"
+            open_b = buf.count("[")
+            close_b = buf.count("]")
+            if open_b > close_b:
+                continue
+            tokens, lines = tokenize(buf)
+            buf = ""
+            while tokens:
+                ast = parse(tokens, lines)
+                res = eval_node(ast, env)
+                is_statement = (
+                    isinstance(ast, list) and ast and
+                    isinstance(ast[0], Symbol) and
+                    ast[0].name in (".", "!", "§", ":", "::", "W", "D")
+                )
+                if res is not None and not is_statement:
+                    print(f"=> {res}")
+        except KeyboardInterrupt:
+            print("\nKeyboardInterrupt")
+            buf = ""
+        except AICError as e:
+            print(f"AIC Error: {e}")
+            buf = ""
+        except Exception as e:
+            print(f"Error: {e}")
+            buf = ""
+
 def main():
     parser = argparse.ArgumentParser(
         description="AIC (AI Compiler / AI C) - Systems Language Engineered for Artificial Intelligence",
@@ -174,6 +224,10 @@ def main():
     # bench
     p_bench = subparsers.add_parser("bench", help="Run execution speed benchmarks (AIC vs C GCC -O2 vs Node.js vs Python)")
     p_bench.set_defaults(func=cmd_bench)
+
+    # repl
+    p_repl = subparsers.add_parser("repl", help="Start an interactive read-eval-print loop (REPL)")
+    p_repl.set_defaults(func=cmd_repl)
 
     args = parser.parse_args()
     args.func(args)

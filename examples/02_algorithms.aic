@@ -1,0 +1,34 @@
+// examples/02_algorithms.aic
+// Functions, recursion, control flow, and bounded loops in AIC
+
+// 1. Recursive Fibonacci Function
+[: fib [n] [D
+  [? [<= n 1]
+    [^ n]
+    [^ [+ [fib [- n 1]] [fib [- n 2]]]]]
+]]
+
+// 2. Iterative Collatz Sequence Length
+[: collatz_len [n] [D
+  [! steps 0]
+  [! x n]
+  [W [> x 1] [D
+    [? [== [& x 1] 0]
+      [! x [/ x 2]]
+      [! x [+ [* 3 x] 1]]]
+    [! steps [+ steps 1]]
+  ]]
+  [^ steps]
+]]
+
+[. "--- Algorithm Demonstrations ---\n"]
+
+// 3. Compute Fibonacci Numbers in a Hardware Loop
+[. "First 10 Fibonacci Numbers:\n"]
+[@> 10 [i] [D
+  [. "  fib(" i ") = " [fib i] "\n"]
+]]
+
+// 4. Compute Collatz Steps
+[! test_val 27]
+[. "\nCollatz steps for " test_val ": " [collatz_len test_val] "\n"]

@@ -1,0 +1,30 @@
+// examples/01_basics.aic
+// Basic syntax, variables, arithmetic, and printing in AIC
+
+// 1. Variable Assignment with [! var value]
+[! name "Antigravity"]
+[! version 5]
+
+// 2. Printing with [. arg1 arg2 ...]
+[. "Hello from AIC " version "! Created by " name "\n"]
+
+// 3. Integer Arithmetic (+, -, *, /, %)
+[! a 100]
+[! b 7]
+[! sum [+ a b]]
+[! diff [- a b]]
+[! prod [* a b]]
+[! quot [/ a b]]
+[! rem [% a b]]
+
+[. "Arithmetic with a=" a " and b=" b ":\n"]
+[. "  Sum:        " sum "\n"]
+[. "  Difference: " diff "\n"]
+[. "  Product:    " prod "\n"]
+[. "  Quotient:   " quot "\n"]
+[. "  Remainder:  " rem "\n"]
+
+// 4. Bitwise Operations (&, |, ^^, <<, >>)
+[! bits [& 255 15]]
+[! shifted [<< bits 2]]
+[. "Bitwise operations: " bits " shifted left by 2: " shifted "\n"]

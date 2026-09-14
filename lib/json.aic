@@ -59,6 +59,10 @@
   [^ [@@.JsonVal:ival v]]
 ]]
 
+[: json_get_bool [[$ v]] [D
+  [^ [@@.JsonVal:ival v]]
+]]
+
 [: [$ json_get_str] [[$ v]] [D
   [^ [@@$.JsonVal:sval v]]
 ]]
