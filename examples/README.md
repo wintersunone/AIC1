@@ -28,3 +28,4 @@ python aic.py build examples/<filename>.aic --target elf -o app.elf
 | [`05_system_arena.aic`](05_system_arena.aic) | Linear bump memory allocator (`lib/arena.aic`), $O(1)$ bulk resets, and safe file I/O operations (`lib/io.aic`). |
 | [`06_min_heap.aic`](06_min_heap.aic) | Bare-metal Binary Min-Heap Priority Queue & HeapSort with raw 64-bit word operations (`@@`, `@@!`). |
 | [`07_bytecode_vm.aic`](07_bytecode_vm.aic) | 64-bit Stack-Based Bytecode Virtual Machine with 15 opcodes, registers, call stack, and loops. |
+| [`08_visual_terminal_suite.aic`](08_visual_terminal_suite.aic) | Real-Time Mandelbrot Fractal (56x24) & Conway's Game of Life Cellular Automaton (30x14). |

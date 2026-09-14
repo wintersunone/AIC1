@@ -123,10 +123,14 @@ class Assembler:
 
         for line_no, raw_line in enumerate(lines, 1):
             line = raw_line.strip()
-            if '//' in line:
-                line = line[:line.index('//')].strip()
-            if '#' in line:
-                line = line[:line.index('#')].strip()
+            in_q = False
+            for ci, ch in enumerate(line):
+                if ch == '"' and (ci == 0 or line[ci-1] != '\\'):
+                    in_q = not in_q
+                elif not in_q:
+                    if ch == '#' or (ch == '/' and ci + 1 < len(line) and line[ci+1] == '/'):
+                        line = line[:ci].strip()
+                        break
             if not line:
                 continue
 

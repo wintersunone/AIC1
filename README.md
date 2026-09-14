@@ -249,6 +249,7 @@ A collection of annotated, standalone example programs is available in the [`exa
 | [`05_system_arena.aic`](examples/05_system_arena.aic) | `python aic.py run examples/05_system_arena.aic` | Linear bump memory allocator (`lib/arena.aic`), $O(1)$ bulk resets, and safe file I/O operations (`lib/io.aic`). |
 | [`06_min_heap.aic`](examples/06_min_heap.aic) | `python aic.py run examples/06_min_heap.aic` | Bare-metal Binary Min-Heap Priority Queue & HeapSort with raw 64-bit word operations (`@@`, `@@!`). |
 | [`07_bytecode_vm.aic`](examples/07_bytecode_vm.aic) | `python aic.py run examples/07_bytecode_vm.aic` | 64-bit Stack-Based Bytecode Virtual Machine with 15 opcodes, registers, call stack, and loops. |
+| [`08_visual_terminal_suite.aic`](examples/08_visual_terminal_suite.aic) | `python aic.py run examples/08_visual_terminal_suite.aic` | Real-Time Mandelbrot Fractal (56x24) & Conway's Game of Life Cellular Automaton (30x14). |
 
 ---
 

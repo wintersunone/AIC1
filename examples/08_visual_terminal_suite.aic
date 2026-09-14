@@ -1,0 +1,299 @@
+// examples/08_visual_terminal_suite.aic
+// Visual Terminal Graphics & Simulation Suite in pure AIC:
+// 1. Real-Time High-Definition Mandelbrot Fractal (56x24) with fixed-point math
+// 2. Conway's Game of Life Cellular Automaton (30x14) with Glider & Blinker
+
+[: print_num [n]
+  [D
+    [? [== n 0]
+      [D
+        [! zbuf [H 2]]
+        [@! zbuf 0 48]
+        [@! zbuf 1 0]
+        [. zbuf]
+        [^ 0]
+      ]
+      0
+    ]
+    [! temp n]
+    [! is_neg 0]
+    [? [< temp 0]
+      [D
+        [! is_neg 1]
+        [! temp [- 0 temp]]
+      ]
+      0
+    ]
+    [! raw [H 32]]
+    [! len 0]
+    [W [> temp 0]
+      [D
+        [! rem [% temp 10]]
+        [@! raw len [+ 48 rem]]
+        [! len [+ len 1]]
+        [! temp [/ temp 10]]
+      ]
+    ]
+    [? [== is_neg 1]
+      [D
+        [@! raw len 45]
+        [! len [+ len 1]]
+      ]
+      0
+    ]
+    [! out [H [+ len 1]]]
+    [! k 0]
+    [W [< k len]
+      [D
+        [@! out k [@ raw [- [- len 1] k]]]
+        [! k [+ k 1]]
+      ]
+    ]
+    [@! out len 0]
+    [. out]
+    [^ 0]
+  ]
+]
+
+[: render_mandelbrot []
+  [D
+    [! ramp " .:-=+*#%@"]
+    [! row [H 64]]
+    [! total_points 0]
+    [! inner_core 0]
+
+    [! y -12]
+    [W [< y 12]
+      [D
+        [! col 0]
+        [W [< col 56]
+          [D
+            [! x [- col 35]]
+            [! cr [/ [* x 10000] 18]]
+            [! ci [/ [* y 10000] 9]]
+
+            [! zr 0]
+            [! zi 0]
+            [! iter 0]
+            [! escaped 0]
+            [W [& [< iter 32] [== escaped 0]]
+              [D
+                [! zr2 [/ [* zr zr] 10000]]
+                [! zi2 [/ [* zi zi] 10000]]
+                [? [> [+ zr2 zi2] 40000]
+                  [! escaped 1]
+                  [D
+                    [! new_zi [+ [/ [* [* 2 zr] zi] 10000] ci]]
+                    [! new_zr [+ [- zr2 zi2] cr]]
+                    [! zi new_zi]
+                    [! zr new_zr]
+                    [! iter [+ iter 1]]
+                  ]
+                ]
+              ]
+            ]
+
+            [! total_points [+ total_points 1]]
+            [? [== escaped 0]
+              [! inner_core [+ inner_core 1]]
+              0
+            ]
+
+            [! c_idx [/ iter 3]]
+            [? [> c_idx 9]
+              [! c_idx 9]
+              0
+            ]
+            [! ch [@ ramp c_idx]]
+            [@! row col ch]
+
+            [! col [+ col 1]]
+          ]
+        ]
+        [@! row 56 10]
+        [@! row 57 0]
+        [. row]
+        [! y [+ y 1]]
+      ]
+    ]
+
+    [! escaped_points [- total_points inner_core]]
+    [! escape_pct [/ [* escaped_points 100] total_points]]
+
+    [. "\n--- Mandelbrot Statistics ---\n"]
+    [. "Total points rendered : "]
+    [print_num total_points]
+    [. "\nInner core points     : "]
+    [print_num inner_core]
+    [. "\nEscaped points        : "]
+    [print_num escaped_points]
+    [. "\nEscape percentage     : "]
+    [print_num escape_pct]
+    [. "%\n\n"]
+    [^ 0]
+  ]
+]
+
+[: count_neighbors [grid x y]
+  [D
+    [! count 0]
+    [! dy -1]
+    [W [<= dy 1]
+      [D
+        [! dx -1]
+        [W [<= dx 1]
+          [D
+            [? [| [!= dx 0] [!= dy 0]]
+              [D
+                [! nx [% [+ [+ x dx] 30] 30]]
+                [! ny [% [+ [+ y dy] 14] 14]]
+                [! n_idx [+ [* ny 30] nx]]
+                [! count [+ count [@ grid n_idx]]]
+              ]
+              0
+            ]
+            [! dx [+ dx 1]]
+          ]
+        ]
+        [! dy [+ dy 1]]
+      ]
+    ]
+    [^ count]
+  ]
+]
+
+[: run_game_of_life []
+  [D
+    [! cur_grid [H 420]]
+    [! next_grid [H 420]]
+    [! line [H 35]]
+
+    [! i 0]
+    [W [< i 420]
+      [D
+        [@! cur_grid i 0]
+        [@! next_grid i 0]
+        [! i [+ i 1]]
+      ]
+    ]
+
+    // Spawn Glider pattern: (1,0), (2,1), (0,2), (1,2), (2,2)
+    [@! cur_grid [+ [* 0 30] 1] 1]
+    [@! cur_grid [+ [* 1 30] 2] 1]
+    [@! cur_grid [+ [* 2 30] 0] 1]
+    [@! cur_grid [+ [* 2 30] 1] 1]
+    [@! cur_grid [+ [* 2 30] 2] 1]
+
+    // Spawn Blinker oscillator pattern: (18,6), (19,6), (20,6)
+    [@! cur_grid [+ [* 6 30] 18] 1]
+    [@! cur_grid [+ [* 6 30] 19] 1]
+    [@! cur_grid [+ [* 6 30] 20] 1]
+
+    [! gen 1]
+    [W [<= gen 5]
+      [D
+        [! pop 0]
+        [! p 0]
+        [W [< p 420]
+          [D
+            [! pop [+ pop [@ cur_grid p]]]
+            [! p [+ p 1]]
+          ]
+        ]
+
+        [. "+--- Generation "]
+        [print_num gen]
+        [. " | Live Population: "]
+        [print_num pop]
+        [. " ---+\n"]
+
+        [! gy 0]
+        [W [< gy 14]
+          [D
+            [! gx 0]
+            [W [< gx 30]
+              [D
+                [! cell_val [@ cur_grid [+ [* gy 30] gx]]]
+                [? [== cell_val 1]
+                  [@! line gx 35]
+                  [@! line gx 46]
+                ]
+                [! gx [+ gx 1]]
+              ]
+            ]
+            [@! line 30 10]
+            [@! line 31 0]
+            [. line]
+            [! gy [+ gy 1]]
+          ]
+        ]
+        [. "\n"]
+
+        [! ey 0]
+        [W [< ey 14]
+          [D
+            [! ex 0]
+            [W [< ex 30]
+              [D
+                [! idx [+ [* ey 30] ex]]
+                [! cur_val [@ cur_grid idx]]
+                [! neighbors [count_neighbors cur_grid ex ey]]
+                [! next_val 0]
+                [? [== cur_val 1]
+                  [D
+                    [? [| [== neighbors 2] [== neighbors 3]]
+                      [! next_val 1]
+                      [! next_val 0]
+                    ]
+                  ]
+                  [D
+                    [? [== neighbors 3]
+                      [! next_val 1]
+                      [! next_val 0]
+                    ]
+                  ]
+                ]
+                [@! next_grid idx next_val]
+                [! ex [+ ex 1]]
+              ]
+            ]
+            [! ey [+ ey 1]]
+          ]
+        ]
+
+        [! c 0]
+        [W [< c 420]
+          [D
+            [@! cur_grid c [@ next_grid c]]
+            [! c [+ c 1]]
+          ]
+        ]
+
+        [! gen [+ gen 1]]
+      ]
+    ]
+    [^ 0]
+  ]
+]
+
+[: main_demo []
+  [D
+    [. "================================================================\n"]
+    [. " AIC Visual Terminal Graphics & Simulation Suite\n"]
+    [. "================================================================\n\n"]
+    [. "----------------------------------------------------------------\n"]
+    [. " Demo 1: Real-Time High-Definition Mandelbrot Fractal (56x24)\n"]
+    [. "----------------------------------------------------------------\n"]
+    [render_mandelbrot]
+    [. "----------------------------------------------------------------\n"]
+    [. " Demo 2: Conway's Game of Life Cellular Simulation (30x14)\n"]
+    [. "----------------------------------------------------------------\n"]
+    [run_game_of_life]
+    [. "================================================================\n"]
+    [. " Demonstration Completed Successfully\n"]
+    [. "================================================================\n"]
+    [^ 0]
+  ]
+]
+
+[main_demo]
