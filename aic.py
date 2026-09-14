@@ -164,7 +164,7 @@ def main():
     p_test.set_defaults(func=cmd_test)
 
     # verify
-    p_verify = subparsers.add_parser("verify", help="Run the full 17-stage self-hosting bootstrap verification pipeline")
+    p_verify = subparsers.add_parser("verify", help="Run the full 18-stage self-hosting bootstrap verification pipeline")
     p_verify.set_defaults(func=cmd_verify)
 
     args = parser.parse_args()

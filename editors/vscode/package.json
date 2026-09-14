@@ -1,0 +1,30 @@
+{
+  "name": "aic-language-support",
+  "displayName": "AIC Language Support",
+  "description": "Syntax highlighting and language configuration for the AIC (AI Compiler) language.",
+  "version": "1.0.0",
+  "publisher": "AIC-Team",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "aic",
+        "aliases": ["AIC", "aic"],
+        "extensions": [".aic"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "aic",
+        "scopeName": "source.aic",
+        "path": "./syntaxes/aic.tmLanguage.json"
+      }
+    ]
+  }
+}

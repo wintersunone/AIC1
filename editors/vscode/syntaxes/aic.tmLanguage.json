@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AIC",
+  "scopeName": "source.aic",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#directives" },
+    { "include": "#keywords" },
+    { "include": "#record_access" },
+    { "include": "#operators" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.aic",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.aic",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.aic",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "match": "\\[\\s*(import|load)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.directive.aic" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\[\\s*(§|::|:|\\^|\\?|W|D|@>|\\!|\\.)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.aic" }
+          }
+        }
+      ]
+    },
+    "record_access": {
+      "patterns": [
+        {
+          "match": "@@(\\$|\\!)?\\.[A-Za-z0-9_:]+",
+          "name": "variable.other.property.aic"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "(\\+|-|\\*|/|%|&|\\||\\^\\^|<<|>>|==|!=|<=|>=|<|>|&&|\\|\\||@|@!|@@|@@!|@@\\$|@@\\$!|H|L|N|V|O|Z|R|K|X|F)",
+          "name": "keyword.operator.aic"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.aic",
+          "match": "\\b-?\\d+\\b"
+        }
+      ]
+    }
+  }
+}
