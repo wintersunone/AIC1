@@ -1,0 +1,39 @@
+// Task: algo_insertion_sort
+[import "lib/test.aic"]
+
+[: insertion_sort [[$ buf] len] [D
+  [@> 1 len [i] [D
+    [! key [@@ buf i]]
+    [! j [- i 1]]
+    [! loop 1]
+    [W loop [D
+      [? [< j 0] [! loop 0] [D
+        [! prev [@@ buf j]]
+        [? [> prev key] [D
+          [@@! buf [+ j 1] prev]
+          [! j [- j 1]]
+        ] [D
+          [! loop 0]
+        ]]
+      ]]
+    ]]
+    [@@! buf [+ j 1] key]
+  ]]
+  [^ 0]
+]]
+
+[! runner [test_runner_init]]
+[! arr [H [* 5 8]]]
+[@@! arr 0 64]
+[@@! arr 1 25]
+[@@! arr 2 12]
+[@@! arr 3 22]
+[@@! arr 4 11]
+
+[insertion_sort arr 5]
+[test_assert_eq runner [@@ arr 0] 11 "arr[0] == 11"]
+[test_assert_eq runner [@@ arr 1] 12 "arr[1] == 12"]
+[test_assert_eq runner [@@ arr 2] 22 "arr[2] == 22"]
+[test_assert_eq runner [@@ arr 3] 25 "arr[3] == 25"]
+[test_assert_eq runner [@@ arr 4] 64 "arr[4] == 64"]
+[test_summary runner]

@@ -1,0 +1,31 @@
+// Task: vec_filter_evens
+[import "lib/test.aic"]
+[import "lib/vec.aic"]
+
+[: [$ vec_filter_evens] [[$ v]] [D
+  [! n [vec_len v]]
+  [! out [vec_new 4]]
+  [@> n [i] [D
+    [! val [vec_get v i]]
+    [? [== [& val 1] 0] [D
+      [vec_push out val]
+    ] [D]]
+  ]]
+  [^ out]
+]]
+
+[! runner [test_runner_init]]
+[! v [vec_new 4]]
+[vec_push v 1]
+[vec_push v 2]
+[vec_push v 3]
+[vec_push v 4]
+[vec_push v 5]
+[vec_push v 6]
+
+[! evens [vec_filter_evens v]]
+[test_assert_eq runner [vec_len evens] 3 "3 even numbers"]
+[test_assert_eq runner [vec_get evens 0] 2 "first even is 2"]
+[test_assert_eq runner [vec_get evens 1] 4 "second even is 4"]
+[test_assert_eq runner [vec_get evens 2] 6 "third even is 6"]
+[test_summary runner]

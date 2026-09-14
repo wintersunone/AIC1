@@ -1,0 +1,26 @@
+// Task: json_nested_query
+[import "lib/test.aic"]
+[import "lib/json.aic"]
+
+[! runner [test_runner_init]]
+
+[! meta [json_obj]]
+[json_obj_set meta "agent" [json_str "Antigravity"]]
+[json_obj_set meta "epoch" [json_int 2026]]
+
+[! root [json_obj]]
+[json_obj_set root "status" [json_str "ok"]]
+[json_obj_set root "meta" meta]
+
+[! raw [json_stringify root]]
+[! parsed [json_parse raw]]
+
+[! p_meta [json_obj_get parsed "meta"]]
+[test_assert_eq runner [json_tag p_meta] 5 "nested meta is OBJ"]
+
+[! p_agent [json_obj_get p_meta "agent"]]
+[test_assert_str_eq runner [json_get_str p_agent] "Antigravity" "agent is Antigravity"]
+
+[! p_epoch [json_obj_get p_meta "epoch"]]
+[test_assert_eq runner [json_get_int p_epoch] 2026 "epoch is 2026"]
+[test_summary runner]

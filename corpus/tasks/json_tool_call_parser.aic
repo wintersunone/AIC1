@@ -1,0 +1,23 @@
+// Task: json_tool_call_parser
+[import "lib/test.aic"]
+[import "lib/json.aic"]
+
+[! runner [test_runner_init]]
+
+[! payload [json_obj]]
+[json_obj_set payload "tool" [json_str "compile"]]
+[json_obj_set payload "timeout" [json_int 30]]
+
+[! json_str_data [json_stringify payload]]
+[! parsed [json_parse json_str_data]]
+
+[test_assert_eq runner [json_tag parsed] 5 "parsed tag is OBJ"]
+[test_assert_true runner [json_obj_contains parsed "tool"] "contains tool"]
+
+[! tool_val [json_obj_get parsed "tool"]]
+[test_assert_str_eq runner [json_get_str tool_val] "compile" "tool is compile"]
+
+[! timeout_val [json_obj_get parsed "timeout"]]
+[test_assert_eq runner [json_get_int timeout_val] 30 "timeout is 30"]
+
+[test_summary runner]

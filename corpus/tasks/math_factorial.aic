@@ -1,0 +1,19 @@
+// Task: math_factorial
+[import "lib/test.aic"]
+
+[: fact [n] [D
+  [! res 1]
+  [! cur n]
+  [W [> cur 1] [D
+    [! res [* res cur]]
+    [! cur [- cur 1]]
+  ]]
+  [^ res]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [fact 0] 1 "fact(0) == 1"]
+[test_assert_eq runner [fact 1] 1 "fact(1) == 1"]
+[test_assert_eq runner [fact 5] 120 "fact(5) == 120"]
+[test_assert_eq runner [fact 7] 5040 "fact(7) == 5040"]
+[test_summary runner]

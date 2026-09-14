@@ -1,0 +1,21 @@
+// Task: math_collatz_length
+[import "lib/test.aic"]
+
+[: collatz_len [n] [D
+  [! steps 0]
+  [! x n]
+  [W [> x 1] [D
+    [? [== [& x 1] 0]
+      [! x [/ x 2]]
+      [! x [+ [* 3 x] 1]]]
+    [! steps [+ steps 1]]
+  ]]
+  [^ steps]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [collatz_len 1] 0 "collatz_len(1) == 0"]
+[test_assert_eq runner [collatz_len 2] 1 "collatz_len(2) == 1"]
+[test_assert_eq runner [collatz_len 6] 8 "collatz_len(6) == 8"]
+[test_assert_eq runner [collatz_len 12] 9 "collatz_len(12) == 9"]
+[test_summary runner]

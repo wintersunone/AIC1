@@ -1,0 +1,26 @@
+// Task: algo_kadane_max_subarray
+[import "lib/test.aic"]
+[import "lib/math.aic"]
+
+[: max_subarray [[$ buf] len] [D
+  [! max_so_far [@@ buf 0]]
+  [! cur_max [@@ buf 0]]
+  [@> 1 len [i] [D
+    [! val [@@ buf i]]
+    [! cur_max [math_max val [+ cur_max val]]]
+    [! max_so_far [math_max max_so_far cur_max]]
+  ]]
+  [^ max_so_far]
+]]
+
+[! runner [test_runner_init]]
+[! arr [H [* 6 8]]]
+[@@! arr 0 -2]
+[@@! arr 1 1]
+[@@! arr 2 -3]
+[@@! arr 3 4]
+[@@! arr 4 -1]
+[@@! arr 5 2]
+
+[test_assert_eq runner [max_subarray arr 6] 5 "max subarray [4, -1, 2] is 5"]
+[test_summary runner]

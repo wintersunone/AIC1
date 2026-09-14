@@ -2,34 +2,16 @@
 aic_main:
     pushq   %rbp
     movq    %rsp, %rbp
-    subq    $112, %rsp
+    subq    $16, %rsp
     movq    $0, -8(%rbp)
-    movq    $0, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    $0, -40(%rbp)
-    movq    $0, -48(%rbp)
-    movq    $0, -56(%rbp)
-    movq    $0, -64(%rbp)
-    movq    $0, -72(%rbp)
-    movq    $0, -80(%rbp)
-    movq    $0, -88(%rbp)
-    movq    $0, -96(%rbp)
-    movq    $0, -104(%rbp)
-    movq    $0, -112(%rbp)
     call    aicfn_test_runner_init
-    movq    %rax, -80(%rbp)
-    movq    $4096, %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_new
     movq    %rax, -8(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
     movq    -8(%rbp), %rax
     pushq   %rax
+    movq    $0, %rax
+    pushq   %rax
     popq    %rdi
-    call    aicfn_arena_offset
+    call    aicfn_square
     pushq   %rax
     movq    $0, %rax
     pushq   %rax
@@ -40,14 +22,14 @@ aic_main:
     popq    %rsi
     popq    %rdi
     call    aicfn_test_assert_eq
-    movq    -80(%rbp), %rax
-    pushq   %rax
     movq    -8(%rbp), %rax
     pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_cap
+    movq    $7, %rax
     pushq   %rax
-    movq    $4096, %rax
+    popq    %rdi
+    call    aicfn_square
+    pushq   %rax
+    movq    $49, %rax
     pushq   %rax
     leaq    aicstr_1(%rip), %rax
     pushq   %rax
@@ -58,17 +40,12 @@ aic_main:
     call    aicfn_test_assert_eq
     movq    -8(%rbp), %rax
     pushq   %rax
-    movq    $16, %rax
+    movq    $-6, %rax
     pushq   %rax
-    popq    %rsi
     popq    %rdi
-    call    aicfn_arena_alloc_words
-    movq    %rax, -96(%rbp)
-    movq    -80(%rbp), %rax
+    call    aicfn_square
     pushq   %rax
-    movq    -96(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
+    movq    $36, %rax
     pushq   %rax
     leaq    aicstr_2(%rip), %rax
     pushq   %rax
@@ -77,854 +54,12 @@ aic_main:
     popq    %rsi
     popq    %rdi
     call    aicfn_test_assert_eq
-    movq    -80(%rbp), %rax
-    pushq   %rax
     movq    -8(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_used
-    pushq   %rax
-    movq    $128, %rax
-    pushq   %rax
-    leaq    aicstr_3(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_buffer
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    pushq   %rax
-    movq    $1234567, %rax
-    popq    %rbx
-    popq    %rcx
-    movq    %rax, (%rcx,%rbx,8)
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    pushq   %rax
-    movq    $7654321, %rax
-    popq    %rbx
-    popq    %rcx
-    movq    %rax, (%rcx,%rbx,8)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    movq    (%rax,%rbx,8), %rax
-    pushq   %rax
-    movq    $1234567, %rax
-    pushq   %rax
-    leaq    aicstr_4(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    movq    (%rax,%rbx,8), %rax
-    pushq   %rax
-    movq    $7654321, %rax
-    pushq   %rax
-    leaq    aicstr_5(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    movq    $8, %rax
-    pushq   %rax
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_arena_alloc_words
-    movq    %rax, -104(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -104(%rbp), %rax
-    pushq   %rax
-    movq    $16, %rax
-    pushq   %rax
-    leaq    aicstr_6(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_used
-    pushq   %rax
-    movq    $192, %rax
-    pushq   %rax
-    leaq    aicstr_7(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_reset
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_arena_offset
-    pushq   %rax
-    movq    $0, %rax
-    pushq   %rax
-    leaq    aicstr_8(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    leaq    aicstr_9(%rip), %rax
-    movq    %rax, -88(%rbp)
-    leaq    aicstr_10(%rip), %rax
-    movq    %rax, -64(%rbp)
-    movq    -88(%rbp), %rax
-    pushq   %rax
-    movq    -64(%rbp), %rax
-    pushq   %rax
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_io_write_file
-    movq    %rax, -112(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -112(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    pushq   %rax
-    leaq    aicstr_11(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -88(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_io_file_exists
-    movq    %rax, -48(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -48(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    pushq   %rax
-    leaq    aicstr_12(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -88(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_io_read_file
-    movq    %rax, -72(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -72(%rbp), %rax
-    pushq   %rax
-    movq    -64(%rbp), %rax
-    pushq   %rax
-    leaq    aicstr_13(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_str_eq
-    leaq    aicstr_14(%rip), %rax
-    movq    %rax, -32(%rbp)
-    movq    -88(%rbp), %rax
-    pushq   %rax
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_io_append_file
-    movq    %rax, -24(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $1, %rax
-    pushq   %rax
-    leaq    aicstr_15(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_eq
-    movq    -64(%rbp), %rax
-    pushq   %rax
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_str_cat
-    movq    %rax, -40(%rbp)
-    movq    -88(%rbp), %rax
-    pushq   %rax
-    popq    %rdi
-    call    aicfn_io_read_file
-    movq    %rax, -56(%rbp)
-    movq    -80(%rbp), %rax
-    pushq   %rax
-    movq    -56(%rbp), %rax
-    pushq   %rax
-    movq    -40(%rbp), %rax
-    pushq   %rax
-    leaq    aicstr_16(%rip), %rax
-    pushq   %rax
-    popq    %rcx
-    popq    %rdx
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_test_assert_str_eq
-    movq    -80(%rbp), %rax
     pushq   %rax
     popq    %rdi
     call    aicfn_test_summary
     movq    $0, %rax
 .Lmain_ret:
-    leave
-    ret
-
-aicfn_arena_new:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    $0, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setle    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lternelse1
-    movq    $65536, %rax
-    jmp     .Lternend2
-.Lternelse1:
-    movq    -8(%rbp), %rax
-.Lternend2:
-    movq    %rax, -32(%rbp)
-    movq    -32(%rbp), %rax
-    leaq    1(%rax), %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok3
-    jmp     .Lruntimeerror
-.Lallocok3:
-    movq    %rax, -24(%rbp)
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    pushq   %rax
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    movq    $25, %rdi
-    movq    $1, %rsi
-    call    aic_calloc
-    testq   %rax, %rax
-    jne     .Lallocok4
-    jmp     .Lruntimeerror
-.Lallocok4:
-    popq    %rbx
-    movq    %rbx, 16(%rax)
-    popq    %rbx
-    movq    %rbx, 8(%rax)
-    popq    %rbx
-    movq    %rbx, 0(%rax)
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp), %rax
-    jmp     .Lret_arena_new
-    movq    $0, %rax
-.Lret_arena_new:
-    leave
-    ret
-
-aicfn_arena_buffer:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    movq    0(%rax), %rax
-    jmp     .Lret_arena_buffer
-    movq    $0, %rax
-.Lret_arena_buffer:
-    leave
-    ret
-
-aicfn_arena_offset:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    movq    8(%rax), %rax
-    jmp     .Lret_arena_offset
-    movq    $0, %rax
-.Lret_arena_offset:
-    leave
-    ret
-
-aicfn_arena_cap:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    movq    16(%rax), %rax
-    jmp     .Lret_arena_cap
-    movq    $0, %rax
-.Lret_arena_cap:
-    leave
-    ret
-
-aicfn_arena_alloc:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $48, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    %rsi, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    $0, -40(%rbp)
-    movq    $0, -48(%rbp)
-    movq    -8(%rbp), %rax
-    movq    8(%rax), %rax
-    movq    %rax, -48(%rbp)
-    movq    -8(%rbp), %rax
-    movq    16(%rax), %rax
-    movq    %rax, -32(%rbp)
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $7, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    addq    %rbx, %rax
-    pushq   %rax
-    movq    $-8, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    andq    %rbx, %rax
-    movq    %rax, -24(%rbp)
-    movq    -48(%rbp), %rax
-    pushq   %rax
-    movq    -24(%rbp), %rax
-    movq    %rax, %rbx
-    popq    %rax
-    addq    %rbx, %rax
-    movq    %rax, -40(%rbp)
-    movq    -40(%rbp), %rax
-    pushq   %rax
-    movq    -32(%rbp), %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setg    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse5
-    movq    $-1, %rax
-    jmp     .Lret_arena_alloc
-    jmp     .Lendif6
-.Lelse5:
-.Lendif6:
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    movq    -40(%rbp), %rax
-    popq    %rbx
-    movq    %rax, 8(%rbx)
-    movq    -48(%rbp), %rax
-    jmp     .Lret_arena_alloc
-    movq    $0, %rax
-.Lret_arena_alloc:
-    leave
-    ret
-
-aicfn_arena_alloc_words:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    %rsi, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $8, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    imulq   %rbx, %rax
-    pushq   %rax
-    popq    %rsi
-    popq    %rdi
-    call    aicfn_arena_alloc
-    movq    %rax, -24(%rbp)
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setl    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse7
-    movq    $-1, %rax
-    jmp     .Lret_arena_alloc_words
-    jmp     .Lendif8
-.Lelse7:
-.Lendif8:
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $8, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    testq   %rbx, %rbx
-    jne     .Ldivok9
-    jmp     .Ldivzero
-.Ldivok9:
-    cqto
-    idivq   %rbx
-    jmp     .Lret_arena_alloc_words
-    movq    $0, %rax
-.Lret_arena_alloc_words:
-    leave
-    ret
-
-aicfn_arena_reset:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    popq    %rbx
-    movq    %rax, 8(%rbx)
-    movq    $0, %rax
-    jmp     .Lret_arena_reset
-    movq    $0, %rax
-.Lret_arena_reset:
-    leave
-    ret
-
-aicfn_arena_used:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    movq    8(%rax), %rax
-    jmp     .Lret_arena_used
-    movq    $0, %rax
-.Lret_arena_used:
-    leave
-    ret
-
-aicfn_arena_remaining:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-
-    movq    -8(%rbp), %rax
-    movq    16(%rax), %rax
-    pushq   %rax
-    movq    -8(%rbp), %rax
-    movq    8(%rax), %rax
-    movq    %rax, %rbx
-    popq    %rax
-    subq    %rbx, %rax
-    jmp     .Lret_arena_remaining
-    movq    $0, %rax
-.Lret_arena_remaining:
-    leave
-    ret
-
-aicfn_io_read_file:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    $0, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    -8(%rbp), %rax
-    movq    %rax, %rdi
-    leaq    aicstr_17(%rip), %rsi
-    call    aic_fopen
-    testq   %rax, %rax
-    jne     .Lopenok10
-    jmp     .Lruntimeerror
-.Lopenok10:
-    movq    %rax, -24(%rbp)
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    sete    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse11
-    leaq    aicstr_18(%rip), %rax
-    jmp     .Lret_io_read_file
-    jmp     .Lendif12
-.Lelse11:
-.Lendif12:
-    movq    -24(%rbp), %rax
-    movq    %rax, %r12
-    movq    %r12, %rdi
-    call    aic_ftell
-    movq    %rax, %r13
-    movq    %r12, %rdi
-    movq    $0, %rsi
-    movq    $2, %rdx
-    call    aic_fseek
-    movq    %r12, %rdi
-    call    aic_ftell
-    movq    %rax, %r14
-    movq    %r12, %rdi
-    movq    %r13, %rsi
-    movq    $0, %rdx
-    call    aic_fseek
-    movq    %r14, %rax
-    movq    %rax, -32(%rbp)
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setg    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lternelse13
-    movq    -24(%rbp), %rax
-    movq    %rax, %r12
-    movq    -32(%rbp), %rax
-    movq    %rax, %r13
-    leaq    1(%r13), %rdi
-    call    aic_malloc
-    testq   %rax, %rax
-    jne     .Lallocok15
-    jmp     .Lruntimeerror
-.Lallocok15:
-    movq    %rax, %r14
-    movq    %r14, %rdi
-    movq    $1, %rsi
-    movq    %r13, %rdx
-    movq    %r12, %rcx
-    call    aic_fread
-    movb    $0, (%r14,%rax)
-    movq    %r14, %rax
-    jmp     .Lternend14
-.Lternelse13:
-    leaq    aicstr_18(%rip), %rax
-.Lternend14:
-    movq    %rax, -16(%rbp)
-    movq    -24(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_fclose
-    movq    -16(%rbp), %rax
-    jmp     .Lret_io_read_file
-    movq    $0, %rax
-.Lret_io_read_file:
-    leave
-    ret
-
-aicfn_io_write_file:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    %rsi, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    -8(%rbp), %rax
-    movq    %rax, %rdi
-    leaq    aicstr_19(%rip), %rsi
-    call    aic_fopen
-    testq   %rax, %rax
-    jne     .Lopenok16
-    jmp     .Lruntimeerror
-.Lopenok16:
-    movq    %rax, -24(%rbp)
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    sete    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse17
-    movq    $0, %rax
-    jmp     .Lret_io_write_file
-    jmp     .Lendif18
-.Lelse17:
-.Lendif18:
-    movq    -16(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_strlen
-    movq    %rax, -32(%rbp)
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setg    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse19
-    movq    -24(%rbp), %rax
-    movq    %rax, %r12
-    movq    -16(%rbp), %rax
-    movq    %rax, %r13
-    movq    %r13, %rdi
-    call    aic_strlen
-    movq    %rax, %r14
-    movq    %r13, %rdi
-    movq    $1, %rsi
-    movq    %r14, %rdx
-    movq    %r12, %rcx
-    call    aic_fwrite
-    jmp     .Lendif20
-.Lelse19:
-.Lendif20:
-    movq    -24(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_fclose
-    movq    $1, %rax
-    jmp     .Lret_io_write_file
-    movq    $0, %rax
-.Lret_io_write_file:
-    leave
-    ret
-
-aicfn_io_append_file:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    %rsi, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    $0, -32(%rbp)
-    movq    -8(%rbp), %rax
-    movq    %rax, %rdi
-    leaq    aicstr_20(%rip), %rsi
-    call    aic_fopen
-    testq   %rax, %rax
-    jne     .Lopenok21
-    jmp     .Lruntimeerror
-.Lopenok21:
-    movq    %rax, -24(%rbp)
-    movq    -24(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    sete    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse22
-    movq    $0, %rax
-    jmp     .Lret_io_append_file
-    jmp     .Lendif23
-.Lelse22:
-.Lendif23:
-    movq    -16(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_strlen
-    movq    %rax, -32(%rbp)
-    movq    -32(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    setg    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse24
-    movq    -24(%rbp), %rax
-    movq    %rax, %r12
-    movq    -16(%rbp), %rax
-    movq    %rax, %r13
-    movq    %r13, %rdi
-    call    aic_strlen
-    movq    %rax, %r14
-    movq    %r13, %rdi
-    movq    $1, %rsi
-    movq    %r14, %rdx
-    movq    %r12, %rcx
-    call    aic_fwrite
-    jmp     .Lendif25
-.Lelse24:
-.Lendif25:
-    movq    -24(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_fclose
-    movq    $1, %rax
-    jmp     .Lret_io_append_file
-    movq    $0, %rax
-.Lret_io_append_file:
-    leave
-    ret
-
-aicfn_io_file_size:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $32, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    $0, -16(%rbp)
-    movq    $0, -24(%rbp)
-    movq    -8(%rbp), %rax
-    movq    %rax, %rdi
-    leaq    aicstr_17(%rip), %rsi
-    call    aic_fopen
-    testq   %rax, %rax
-    jne     .Lopenok26
-    jmp     .Lruntimeerror
-.Lopenok26:
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    sete    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse27
-    movq    $-1, %rax
-    jmp     .Lret_io_file_size
-    jmp     .Lendif28
-.Lelse27:
-.Lendif28:
-    movq    -16(%rbp), %rax
-    movq    %rax, %r12
-    movq    %r12, %rdi
-    call    aic_ftell
-    movq    %rax, %r13
-    movq    %r12, %rdi
-    movq    $0, %rsi
-    movq    $2, %rdx
-    call    aic_fseek
-    movq    %r12, %rdi
-    call    aic_ftell
-    movq    %rax, %r14
-    movq    %r12, %rdi
-    movq    %r13, %rsi
-    movq    $0, %rdx
-    call    aic_fseek
-    movq    %r14, %rax
-    movq    %rax, -24(%rbp)
-    movq    -16(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_fclose
-    movq    -24(%rbp), %rax
-    jmp     .Lret_io_file_size
-    movq    $0, %rax
-.Lret_io_file_size:
-    leave
-    ret
-
-aicfn_io_file_exists:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    subq    $16, %rsp
-    movq    %rdi, -8(%rbp)
-    movq    $0, -16(%rbp)
-    movq    -8(%rbp), %rax
-    movq    %rax, %rdi
-    leaq    aicstr_17(%rip), %rsi
-    call    aic_fopen
-    testq   %rax, %rax
-    jne     .Lopenok29
-    jmp     .Lruntimeerror
-.Lopenok29:
-    movq    %rax, -16(%rbp)
-    movq    -16(%rbp), %rax
-    pushq   %rax
-    movq    $0, %rax
-    movq    %rax, %rbx
-    popq    %rax
-    cmpq    %rbx, %rax
-    sete    %al
-    movzbq  %al, %rax
-    testq   %rax, %rax
-    je      .Lelse30
-    movq    $0, %rax
-    jmp     .Lret_io_file_exists
-    jmp     .Lendif31
-.Lelse30:
-.Lendif31:
-    movq    -16(%rbp), %rax
-    movq    %rax, %rdi
-    call    aic_fclose
-    movq    $1, %rax
-    jmp     .Lret_io_file_exists
-    movq    $0, %rax
-.Lret_io_file_exists:
     leave
     ret
 
@@ -963,7 +98,7 @@ aicfn_str_char_at:
     setl    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    jne      .Lscshort34
+    jne      .Lscshort3
     movq    -16(%rbp), %rax
     pushq   %rax
     movq    -24(%rbp), %rax
@@ -975,17 +110,17 @@ aicfn_str_char_at:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend35
-.Lscshort34:
+    jmp     .Lscend4
+.Lscshort3:
     movq    $1, %rax
-.Lscend35:
+.Lscend4:
     testq   %rax, %rax
-    je      .Lelse32
+    je      .Lelse1
     movq    $0, %rax
     jmp     .Lret_str_char_at
-    jmp     .Lendif33
-.Lelse32:
-.Lendif33:
+    jmp     .Lendif2
+.Lelse1:
+.Lendif2:
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -16(%rbp), %rax
@@ -1025,17 +160,17 @@ aicfn_str_eq:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse36
+    je      .Lelse5
     movq    $0, %rax
     jmp     .Lret_str_eq
-    jmp     .Lendif37
-.Lelse36:
-.Lendif37:
+    jmp     .Lendif6
+.Lelse5:
+.Lendif6:
     movq    $0, %rax
     movq    %rax, -32(%rbp)
     movq    $0, %rax
     movq    %rax, -24(%rbp)
-.Lwtop38:
+.Lwtop7:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1045,7 +180,7 @@ aicfn_str_eq:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lscshort40
+    je      .Lscshort9
     movq    -32(%rbp), %rax
     pushq   %rax
     movq    -40(%rbp), %rax
@@ -1057,12 +192,12 @@ aicfn_str_eq:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend41
-.Lscshort40:
+    jmp     .Lscend10
+.Lscshort9:
     movq    $0, %rax
-.Lscend41:
+.Lscend10:
     testq   %rax, %rax
-    je      .Lwend39
+    je      .Lwend8
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -32(%rbp), %rax
@@ -1082,12 +217,12 @@ aicfn_str_eq:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse42
+    je      .Lelse11
     movq    $1, %rax
     movq    %rax, -24(%rbp)
-    jmp     .Lendif43
-.Lelse42:
-.Lendif43:
+    jmp     .Lendif12
+.Lelse11:
+.Lendif12:
     movq    -32(%rbp), %rax
     pushq   %rax
     movq    $1, %rax
@@ -1095,8 +230,8 @@ aicfn_str_eq:
     popq    %rax
     addq    %rbx, %rax
     movq    %rax, -32(%rbp)
-    jmp     .Lwtop38
-.Lwend39:
+    jmp     .Lwtop7
+.Lwend8:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1106,12 +241,12 @@ aicfn_str_eq:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lternelse44
+    je      .Lternelse13
     movq    $1, %rax
-    jmp     .Lternend45
-.Lternelse44:
+    jmp     .Lternend14
+.Lternelse13:
     movq    $0, %rax
-.Lternend45:
+.Lternend14:
     jmp     .Lret_str_eq
     movq    $0, %rax
 .Lret_str_eq:
@@ -1148,18 +283,18 @@ aicfn_str_cmp:
     setl    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lternelse46
+    je      .Lternelse15
     movq    -48(%rbp), %rax
-    jmp     .Lternend47
-.Lternelse46:
+    jmp     .Lternend16
+.Lternelse15:
     movq    -56(%rbp), %rax
-.Lternend47:
+.Lternend16:
     movq    %rax, -64(%rbp)
     movq    $0, %rax
     movq    %rax, -40(%rbp)
     movq    $0, %rax
     movq    %rax, -72(%rbp)
-.Lwtop48:
+.Lwtop17:
     movq    -72(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1169,7 +304,7 @@ aicfn_str_cmp:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lscshort50
+    je      .Lscshort19
     movq    -40(%rbp), %rax
     pushq   %rax
     movq    -64(%rbp), %rax
@@ -1181,12 +316,12 @@ aicfn_str_cmp:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend51
-.Lscshort50:
+    jmp     .Lscend20
+.Lscshort19:
     movq    $0, %rax
-.Lscend51:
+.Lscend20:
     testq   %rax, %rax
-    je      .Lwend49
+    je      .Lwend18
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -40(%rbp), %rax
@@ -1210,7 +345,7 @@ aicfn_str_cmp:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse52
+    je      .Lelse21
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -32(%rbp), %rax
@@ -1218,9 +353,9 @@ aicfn_str_cmp:
     popq    %rax
     subq    %rbx, %rax
     movq    %rax, -72(%rbp)
-    jmp     .Lendif53
-.Lelse52:
-.Lendif53:
+    jmp     .Lendif22
+.Lelse21:
+.Lendif22:
     movq    -40(%rbp), %rax
     pushq   %rax
     movq    $1, %rax
@@ -1228,8 +363,8 @@ aicfn_str_cmp:
     popq    %rax
     addq    %rbx, %rax
     movq    %rax, -40(%rbp)
-    jmp     .Lwtop48
-.Lwend49:
+    jmp     .Lwtop17
+.Lwend18:
     movq    -72(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1239,12 +374,12 @@ aicfn_str_cmp:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse54
+    je      .Lelse23
     movq    -72(%rbp), %rax
     jmp     .Lret_str_cmp
-    jmp     .Lendif55
-.Lelse54:
-.Lendif55:
+    jmp     .Lendif24
+.Lelse23:
+.Lendif24:
     movq    -48(%rbp), %rax
     pushq   %rax
     movq    -56(%rbp), %rax
@@ -1289,19 +424,19 @@ aicfn_str_cat:
     movq    $1, %rsi
     call    aic_calloc
     testq   %rax, %rax
-    jne     .Lallocok56
+    jne     .Lallocok25
     jmp     .Lruntimeerror
-.Lallocok56:
+.Lallocok25:
     movq    %rax, -24(%rbp)
     movq    $0, -32(%rbp)
-.Lmaptop57:
+.Lmaptop26:
     movq    -32(%rbp), %rax
     pushq   %rax
     movq    -48(%rbp), %rax
     movq    %rax, %rbx
     popq    %rax
     cmpq    %rbx, %rax
-    jge     .Lmapend58
+    jge     .Lmapend27
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -32(%rbp), %rax
@@ -1316,17 +451,17 @@ aicfn_str_cat:
     popq    %rcx
     movb    %al, (%rcx,%rbx)
     incq    -32(%rbp)
-    jmp     .Lmaptop57
-.Lmapend58:
+    jmp     .Lmaptop26
+.Lmapend27:
     movq    $0, -40(%rbp)
-.Lmaptop59:
+.Lmaptop28:
     movq    -40(%rbp), %rax
     pushq   %rax
     movq    -56(%rbp), %rax
     movq    %rax, %rbx
     popq    %rax
     cmpq    %rbx, %rax
-    jge     .Lmapend60
+    jge     .Lmapend29
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -48(%rbp), %rax
@@ -1346,8 +481,8 @@ aicfn_str_cat:
     popq    %rcx
     movb    %al, (%rcx,%rbx)
     incq    -40(%rbp)
-    jmp     .Lmaptop59
-.Lmapend60:
+    jmp     .Lmaptop28
+.Lmapend29:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -64(%rbp), %rax
@@ -1380,7 +515,7 @@ aicfn_str_find:
     movq    %rax, -24(%rbp)
     movq    $-1, %rax
     movq    %rax, -40(%rbp)
-.Lwtop61:
+.Lwtop30:
     movq    -40(%rbp), %rax
     pushq   %rax
     movq    $-1, %rax
@@ -1390,7 +525,7 @@ aicfn_str_find:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lscshort63
+    je      .Lscshort32
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -32(%rbp), %rax
@@ -1402,12 +537,12 @@ aicfn_str_find:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend64
-.Lscshort63:
+    jmp     .Lscend33
+.Lscshort32:
     movq    $0, %rax
-.Lscend64:
+.Lscend33:
     testq   %rax, %rax
-    je      .Lwend62
+    je      .Lwend31
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -24(%rbp), %rax
@@ -1422,12 +557,12 @@ aicfn_str_find:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse65
+    je      .Lelse34
     movq    -24(%rbp), %rax
     movq    %rax, -40(%rbp)
-    jmp     .Lendif66
-.Lelse65:
-.Lendif66:
+    jmp     .Lendif35
+.Lelse34:
+.Lendif35:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    $1, %rax
@@ -1435,8 +570,8 @@ aicfn_str_find:
     popq    %rax
     addq    %rbx, %rax
     movq    %rax, -24(%rbp)
-    jmp     .Lwtop61
-.Lwend62:
+    jmp     .Lwtop30
+.Lwend31:
     movq    -40(%rbp), %rax
     jmp     .Lret_str_find
     movq    $0, %rax
@@ -1471,17 +606,17 @@ aicfn_str_starts_with:
     setl    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse67
+    je      .Lelse36
     movq    $0, %rax
     jmp     .Lret_str_starts_with
-    jmp     .Lendif68
-.Lelse67:
-.Lendif68:
+    jmp     .Lendif37
+.Lelse36:
+.Lendif37:
     movq    $0, %rax
     movq    %rax, -24(%rbp)
     movq    $1, %rax
     movq    %rax, -32(%rbp)
-.Lwtop69:
+.Lwtop38:
     movq    -32(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1491,7 +626,7 @@ aicfn_str_starts_with:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lscshort71
+    je      .Lscshort40
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -40(%rbp), %rax
@@ -1503,12 +638,12 @@ aicfn_str_starts_with:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend72
-.Lscshort71:
+    jmp     .Lscend41
+.Lscshort40:
     movq    $0, %rax
-.Lscend72:
+.Lscend41:
     testq   %rax, %rax
-    je      .Lwend70
+    je      .Lwend39
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -24(%rbp), %rax
@@ -1528,12 +663,12 @@ aicfn_str_starts_with:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse73
+    je      .Lelse42
     movq    $0, %rax
     movq    %rax, -32(%rbp)
-    jmp     .Lendif74
-.Lelse73:
-.Lendif74:
+    jmp     .Lendif43
+.Lelse42:
+.Lendif43:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    $1, %rax
@@ -1541,8 +676,8 @@ aicfn_str_starts_with:
     popq    %rax
     addq    %rbx, %rax
     movq    %rax, -24(%rbp)
-    jmp     .Lwtop69
-.Lwend70:
+    jmp     .Lwtop38
+.Lwend39:
     movq    -32(%rbp), %rax
     jmp     .Lret_str_starts_with
     movq    $0, %rax
@@ -1578,12 +713,12 @@ aicfn_str_ends_with:
     setl    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse75
+    je      .Lelse44
     movq    $0, %rax
     jmp     .Lret_str_ends_with
-    jmp     .Lendif76
-.Lelse75:
-.Lendif76:
+    jmp     .Lendif45
+.Lelse44:
+.Lendif45:
     movq    -48(%rbp), %rax
     pushq   %rax
     movq    -56(%rbp), %rax
@@ -1595,7 +730,7 @@ aicfn_str_ends_with:
     movq    %rax, -24(%rbp)
     movq    $1, %rax
     movq    %rax, -40(%rbp)
-.Lwtop77:
+.Lwtop46:
     movq    -40(%rbp), %rax
     pushq   %rax
     movq    $0, %rax
@@ -1605,7 +740,7 @@ aicfn_str_ends_with:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lscshort79
+    je      .Lscshort48
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    -56(%rbp), %rax
@@ -1617,12 +752,12 @@ aicfn_str_ends_with:
     testq   %rax, %rax
     setne   %al
     movzbq  %al, %rax
-    jmp     .Lscend80
-.Lscshort79:
+    jmp     .Lscend49
+.Lscshort48:
     movq    $0, %rax
-.Lscend80:
+.Lscend49:
     testq   %rax, %rax
-    je      .Lwend78
+    je      .Lwend47
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -32(%rbp), %rax
@@ -1647,12 +782,12 @@ aicfn_str_ends_with:
     setne    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse81
+    je      .Lelse50
     movq    $0, %rax
     movq    %rax, -40(%rbp)
-    jmp     .Lendif82
-.Lelse81:
-.Lendif82:
+    jmp     .Lendif51
+.Lelse50:
+.Lendif51:
     movq    -24(%rbp), %rax
     pushq   %rax
     movq    $1, %rax
@@ -1660,8 +795,8 @@ aicfn_str_ends_with:
     popq    %rax
     addq    %rbx, %rax
     movq    %rax, -24(%rbp)
-    jmp     .Lwtop77
-.Lwend78:
+    jmp     .Lwtop46
+.Lwend47:
     movq    -40(%rbp), %rax
     jmp     .Lret_str_ends_with
     movq    $0, %rax
@@ -1680,9 +815,9 @@ aicfn_str_from_int:
     movq    $24, %rdi
     call    aic_malloc
     testq   %rax, %rax
-    jne     .Lallocok83
+    jne     .Lallocok52
     jmp     .Lruntimeerror
-.Lallocok83:
+.Lallocok52:
     movq    %rax, %r13
     movq    %r13, %rdi
     leaq    fmt_d(%rip), %rsi
@@ -1724,9 +859,9 @@ aicfn_str_quote:
     movq    $1, %rsi
     call    aic_calloc
     testq   %rax, %rax
-    jne     .Lallocok84
+    jne     .Lallocok53
     jmp     .Lruntimeerror
-.Lallocok84:
+.Lallocok53:
     movq    %rax, -8(%rbp)
     movq    -8(%rbp), %rax
     pushq   %rax
@@ -1759,9 +894,9 @@ aicfn_test_runner_init:
     movq    $1, %rsi
     call    aic_calloc
     testq   %rax, %rax
-    jne     .Lallocok85
+    jne     .Lallocok54
     jmp     .Lruntimeerror
-.Lallocok85:
+.Lallocok54:
     popq    %rbx
     movq    %rbx, 16(%rax)
     popq    %rbx
@@ -1805,7 +940,7 @@ aicfn_test_assert_eq:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse86
+    je      .Lelse55
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -8(%rbp), %rax
@@ -1817,7 +952,7 @@ aicfn_test_assert_eq:
     addq    %rbx, %rax
     popq    %rbx
     movq    %rax, 8(%rbx)
-    leaq    aicstr_21(%rip), %rax
+    leaq    aicstr_3(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1827,15 +962,15 @@ aicfn_test_assert_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_22(%rip), %rax
+    leaq    aicstr_4(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
     movq    $1, %rax
     jmp     .Lret_test_assert_eq
-    jmp     .Lendif87
-.Lelse86:
+    jmp     .Lendif56
+.Lelse55:
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -8(%rbp), %rax
@@ -1847,7 +982,7 @@ aicfn_test_assert_eq:
     addq    %rbx, %rax
     popq    %rbx
     movq    %rax, 16(%rbx)
-    leaq    aicstr_23(%rip), %rax
+    leaq    aicstr_5(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1857,7 +992,7 @@ aicfn_test_assert_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_24(%rip), %rax
+    leaq    aicstr_6(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1867,7 +1002,7 @@ aicfn_test_assert_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_25(%rip), %rax
+    leaq    aicstr_7(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1877,14 +1012,14 @@ aicfn_test_assert_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_26(%rip), %rax
+    leaq    aicstr_8(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
     movq    $0, %rax
     jmp     .Lret_test_assert_eq
-.Lendif87:
+.Lendif56:
     movq    $0, %rax
 .Lret_test_assert_eq:
     leave
@@ -1918,7 +1053,7 @@ aicfn_test_assert_str_eq:
     popq    %rdi
     call    aicfn_str_eq
     testq   %rax, %rax
-    je      .Lelse88
+    je      .Lelse57
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -8(%rbp), %rax
@@ -1930,7 +1065,7 @@ aicfn_test_assert_str_eq:
     addq    %rbx, %rax
     popq    %rbx
     movq    %rax, 8(%rbx)
-    leaq    aicstr_21(%rip), %rax
+    leaq    aicstr_3(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1940,15 +1075,15 @@ aicfn_test_assert_str_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_22(%rip), %rax
+    leaq    aicstr_4(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
     movq    $1, %rax
     jmp     .Lret_test_assert_str_eq
-    jmp     .Lendif89
-.Lelse88:
+    jmp     .Lendif58
+.Lelse57:
     movq    -8(%rbp), %rax
     pushq   %rax
     movq    -8(%rbp), %rax
@@ -1960,7 +1095,7 @@ aicfn_test_assert_str_eq:
     addq    %rbx, %rax
     popq    %rbx
     movq    %rax, 16(%rbx)
-    leaq    aicstr_23(%rip), %rax
+    leaq    aicstr_5(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1970,7 +1105,7 @@ aicfn_test_assert_str_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_27(%rip), %rax
+    leaq    aicstr_9(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1980,7 +1115,7 @@ aicfn_test_assert_str_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_28(%rip), %rax
+    leaq    aicstr_10(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -1990,14 +1125,14 @@ aicfn_test_assert_str_eq:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_29(%rip), %rax
+    leaq    aicstr_11(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
     movq    $0, %rax
     jmp     .Lret_test_assert_str_eq
-.Lendif89:
+.Lendif58:
     movq    $0, %rax
 .Lret_test_assert_str_eq:
     leave
@@ -2015,12 +1150,12 @@ aicfn_test_assert_true:
     pushq   %rax
     movq    -16(%rbp), %rax
     testq   %rax, %rax
-    je      .Lternelse90
+    je      .Lternelse59
     movq    $1, %rax
-    jmp     .Lternend91
-.Lternelse90:
+    jmp     .Lternend60
+.Lternelse59:
     movq    $0, %rax
-.Lternend91:
+.Lternend60:
     pushq   %rax
     movq    $1, %rax
     pushq   %rax
@@ -2054,12 +1189,12 @@ aicfn_test_summary:
     movq    -8(%rbp), %rax
     movq    16(%rax), %rax
     movq    %rax, -16(%rbp)
-    leaq    aicstr_30(%rip), %rax
+    leaq    aicstr_12(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_31(%rip), %rax
+    leaq    aicstr_13(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -2069,7 +1204,7 @@ aicfn_test_summary:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_32(%rip), %rax
+    leaq    aicstr_14(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -2079,7 +1214,7 @@ aicfn_test_summary:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_33(%rip), %rax
+    leaq    aicstr_15(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -2093,8 +1228,8 @@ aicfn_test_summary:
     setg    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lelse92
-    leaq    aicstr_34(%rip), %rax
+    je      .Lelse61
+    leaq    aicstr_16(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -2104,20 +1239,20 @@ aicfn_test_summary:
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    leaq    aicstr_35(%rip), %rax
+    leaq    aicstr_17(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-    jmp     .Lendif93
-.Lelse92:
-    leaq    aicstr_36(%rip), %rax
+    jmp     .Lendif62
+.Lelse61:
+    leaq    aicstr_18(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
     call    aic_printf
-.Lendif93:
-    leaq    aicstr_30(%rip), %rax
+.Lendif62:
+    leaq    aicstr_12(%rip), %rax
     leaq    fmt_s_nl(%rip), %rdi
     movq    %rax, %rsi
     xorl    %eax, %eax
@@ -2131,14 +1266,32 @@ aicfn_test_summary:
     sete    %al
     movzbq  %al, %rax
     testq   %rax, %rax
-    je      .Lternelse94
+    je      .Lternelse63
     movq    $0, %rax
-    jmp     .Lternend95
-.Lternelse94:
+    jmp     .Lternend64
+.Lternelse63:
     movq    $1, %rax
-.Lternend95:
+.Lternend64:
     jmp     .Lret_test_summary
     movq    $0, %rax
 .Lret_test_summary:
+    leave
+    ret
+
+aicfn_square:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    subq    $16, %rsp
+    movq    %rdi, -8(%rbp)
+
+    movq    -8(%rbp), %rax
+    pushq   %rax
+    movq    -8(%rbp), %rax
+    movq    %rax, %rbx
+    popq    %rax
+    imulq   %rbx, %rax
+    jmp     .Lret_square
+    movq    $0, %rax
+.Lret_square:
     leave
     ret

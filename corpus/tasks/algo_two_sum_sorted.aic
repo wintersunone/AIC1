@@ -1,0 +1,27 @@
+// Task: algo_two_sum_sorted
+[import "lib/test.aic"]
+
+[: has_two_sum [[$ buf] len target] [D
+  [! lo 0]
+  [! hi [- len 1]]
+  [! found 0]
+  [W [&& [== found 0] [< lo hi]] [D
+    [! s [+ [@@ buf lo] [@@ buf hi]]]
+    [? [== s target] [! found 1]
+      [? [< s target] [! lo [+ lo 1]] [! hi [- hi 1]]]]
+  ]]
+  [^ found]
+]]
+
+[! runner [test_runner_init]]
+[! arr [H [* 5 8]]]
+[@@! arr 0 2]
+[@@! arr 1 7]
+[@@! arr 2 11]
+[@@! arr 3 15]
+[@@! arr 4 20]
+
+[test_assert_eq runner [has_two_sum arr 5 9] 1 "2 + 7 = 9"]
+[test_assert_eq runner [has_two_sum arr 5 26] 1 "11 + 15 = 26"]
+[test_assert_eq runner [has_two_sum arr 5 100] 0 "no pair sums to 100"]
+[test_summary runner]

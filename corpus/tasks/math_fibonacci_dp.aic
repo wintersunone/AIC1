@@ -1,0 +1,22 @@
+// Task: math_fibonacci_dp
+[import "lib/test.aic"]
+
+[: fib [n] [D
+  [? [<= n 0] [^ 0] [D]]
+  [? [== n 1] [^ 1] [D]]
+  [! a 0]
+  [! b 1]
+  [@> [- n 1] [i] [D
+    [! next [+ a b]]
+    [! a b]
+    [! b next]
+  ]]
+  [^ b]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [fib 0] 0 "fib(0) == 0"]
+[test_assert_eq runner [fib 1] 1 "fib(1) == 1"]
+[test_assert_eq runner [fib 7] 13 "fib(7) == 13"]
+[test_assert_eq runner [fib 10] 55 "fib(10) == 55"]
+[test_summary runner]

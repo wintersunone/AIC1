@@ -1,0 +1,23 @@
+// Task: math_is_prime
+[import "lib/test.aic"]
+
+[: is_prime [n] [D
+  [? [<= n 1] [^ 0] [D]]
+  [? [|| [== n 2] [== n 3]] [^ 1] [D]]
+  [? [== [% n 2] 0] [^ 0] [D]]
+  [! d 3]
+  [! prime 1]
+  [W [&& prime [<= [* d d] n]] [D
+    [? [== [% n d] 0] [! prime 0] [D]]
+    [! d [+ d 2]]
+  ]]
+  [^ prime]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [is_prime 1] 0 "1 is not prime"]
+[test_assert_eq runner [is_prime 2] 1 "2 is prime"]
+[test_assert_eq runner [is_prime 17] 1 "17 is prime"]
+[test_assert_eq runner [is_prime 25] 0 "25 is not prime"]
+[test_assert_eq runner [is_prime 97] 1 "97 is prime"]
+[test_summary runner]

@@ -1,0 +1,21 @@
+// Task: map_word_count
+[import "lib/test.aic"]
+[import "lib/map.aic"]
+
+[: map_inc [[$ m] [$ key]] [D
+  [! cur [map_get m key]]
+  [map_set m key [+ cur 1]]
+  [^ [+ cur 1]]
+]]
+
+[! runner [test_runner_init]]
+[! m [map_new 8]]
+[map_inc m "apple"]
+[map_inc m "banana"]
+[map_inc m "apple"]
+[map_inc m "apple"]
+
+[test_assert_eq runner [map_get m "apple"] 3 "apple count is 3"]
+[test_assert_eq runner [map_get m "banana"] 1 "banana count is 1"]
+[test_assert_eq runner [map_get m "orange"] 0 "orange count is 0"]
+[test_summary runner]

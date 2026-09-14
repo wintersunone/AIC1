@@ -1,0 +1,28 @@
+// Task: vec_prefix_sum
+[import "lib/test.aic"]
+[import "lib/vec.aic"]
+
+[: [$ vec_prefix_sums] [[$ v]] [D
+  [! n [vec_len v]]
+  [! out [vec_new n]]
+  [! running 0]
+  [@> n [i] [D
+    [! running [+ running [vec_get v i]]]
+    [vec_push out running]
+  ]]
+  [^ out]
+]]
+
+[! runner [test_runner_init]]
+[! v [vec_new 4]]
+[vec_push v 3]
+[vec_push v 1]
+[vec_push v 4]
+[vec_push v 2]
+
+[! p [vec_prefix_sums v]]
+[test_assert_eq runner [vec_get p 0] 3 "prefix 0 is 3"]
+[test_assert_eq runner [vec_get p 1] 4 "prefix 1 is 4"]
+[test_assert_eq runner [vec_get p 2] 8 "prefix 2 is 8"]
+[test_assert_eq runner [vec_get p 3] 10 "prefix 3 is 10"]
+[test_summary runner]

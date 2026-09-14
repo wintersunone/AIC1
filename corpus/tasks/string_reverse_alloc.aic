@@ -1,0 +1,21 @@
+// Task: string_reverse_alloc
+[import "lib/test.aic"]
+[import "lib/string.aic"]
+
+[: [$ str_reverse] [[$ s]] [D
+  [! n [L s]]
+  [! out [H n]]
+  [@> n [i] [D
+    [! src_idx [- [- n 1] i]]
+    [@! out i [@ s src_idx]]
+  ]]
+  [@! out n 0]
+  [^ out]
+]]
+
+[! runner [test_runner_init]]
+[! rev [str_reverse "Hello"]]
+[test_assert_str_eq runner rev "olleH" "reversed Hello is olleH"]
+[! rev_empty [str_reverse ""]]
+[test_assert_str_eq runner rev_empty "" "reversed empty is empty"]
+[test_summary runner]

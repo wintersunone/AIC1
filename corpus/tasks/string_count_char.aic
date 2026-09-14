@@ -1,0 +1,18 @@
+// Task: string_count_char
+[import "lib/test.aic"]
+[import "lib/string.aic"]
+
+[: count_char [[$ s] ch] [D
+  [! n [L s]]
+  [! cnt 0]
+  [@> n [i] [D
+    [? [== [@ s i] ch] [! cnt [+ cnt 1]] [D]]
+  ]]
+  [^ cnt]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [count_char "banana" 97] 3 "3 'a's in banana"]
+[test_assert_eq runner [count_char "mississippi" 115] 4 "4 's's in mississippi"]
+[test_assert_eq runner [count_char "aic" 122] 0 "0 'z's in aic"]
+[test_summary runner]

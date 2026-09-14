@@ -1,0 +1,34 @@
+// Task: algo_bubble_sort
+[import "lib/test.aic"]
+
+[: bubble_sort [[$ buf] len] [D
+  [@> len [i] [D
+    [! limit [- [- len i] 1]]
+    [@> limit [j] [D
+      [! a [@@ buf j]]
+      [! b [@@ buf [+ j 1]]]
+      [? [> a b] [D
+        [@@! buf j b]
+        [@@! buf [+ j 1] a]
+      ] [D]]
+    ]]
+  ]]
+  [^ 0]
+]]
+
+[! runner [test_runner_init]]
+[! arr [H [* 5 8]]]
+[@@! arr 0 45]
+[@@! arr 1 12]
+[@@! arr 2 89]
+[@@! arr 3 34]
+[@@! arr 4 23]
+
+[bubble_sort arr 5]
+
+[test_assert_eq runner [@@ arr 0] 12 "sorted[0] == 12"]
+[test_assert_eq runner [@@ arr 1] 23 "sorted[1] == 23"]
+[test_assert_eq runner [@@ arr 2] 34 "sorted[2] == 34"]
+[test_assert_eq runner [@@ arr 3] 45 "sorted[3] == 45"]
+[test_assert_eq runner [@@ arr 4] 89 "sorted[4] == 89"]
+[test_summary runner]

@@ -1,0 +1,31 @@
+// Task: algo_reverse_array
+[import "lib/test.aic"]
+
+[: reverse_words [[$ buf] len] [D
+  [! i 0]
+  [! j [- len 1]]
+  [W [< i j] [D
+    [! a [@@ buf i]]
+    [! b [@@ buf j]]
+    [@@! buf i b]
+    [@@! buf j a]
+    [! i [+ i 1]]
+    [! j [- j 1]]
+  ]]
+  [^ 0]
+]]
+
+[! runner [test_runner_init]]
+[! arr [H [* 4 8]]]
+[@@! arr 0 100]
+[@@! arr 1 200]
+[@@! arr 2 300]
+[@@! arr 3 400]
+
+[reverse_words arr 4]
+
+[test_assert_eq runner [@@ arr 0] 400 "reversed[0] == 400"]
+[test_assert_eq runner [@@ arr 1] 300 "reversed[1] == 300"]
+[test_assert_eq runner [@@ arr 2] 200 "reversed[2] == 200"]
+[test_assert_eq runner [@@ arr 3] 100 "reversed[3] == 100"]
+[test_summary runner]

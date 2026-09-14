@@ -262,6 +262,19 @@ def main():
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     print(f"    >>> SYSTEM LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
+    # 18. Standalone Linux ELF64 Compiler Binary (aic.elf) Verification
+    run([sys.executable, "tools/aic_elf_emitter.py", "compiler_gen_pe.s", "-o", "aic.elf"],
+        "Stage 18: Package standalone Linux native compiler aic.elf (Direct ELF emitter)")
+
+    with open("aic.elf", "rb") as f_aic_elf:
+        aic_elf_bytes = f_aic_elf.read()
+    assert aic_elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes for aic.elf"
+    assert aic_elf_bytes[4] == 2, "Not 64-bit ELF class for aic.elf"
+    (e_machine,) = struct.unpack("<H", aic_elf_bytes[18:20])
+    assert e_machine == 0x3E, f"Invalid machine type for aic.elf {e_machine:#x}"
+    (aic_entry,) = struct.unpack("<Q", aic_elf_bytes[24:32])
+    print(f"    >>> STANDALONE LINUX COMPILER aic.elf VALIDATED: Entry {aic_entry:#x} ({len(aic_elf_bytes):,} bytes) <<<")
+
     # Cleanup temporary test files
     for tmp in ["build_test_io.tmp"]:
         if os.path.exists(tmp):
@@ -269,8 +282,9 @@ def main():
             except: pass
 
     print("\n" + "=" * 70)
-    print("ALL 17 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
-    print(f"Compiler binary: aic.exe ({os.path.getsize('aic.exe'):,} bytes)")
+    print("ALL 18 STAGES PASSED. FULL DUAL-PLATFORM (PE + ELF) TOOLCHAIN FREEDOM PROVEN.")
+    print(f"Windows PE Compiler : aic.exe ({os.path.getsize('aic.exe'):,} bytes)")
+    print(f"Linux ELF Compiler   : aic.elf ({os.path.getsize('aic.elf'):,} bytes)")
     print("Zero external toolchain dependency (Windows PE & Linux ELF direct emitters).")
     print("=" * 70)
 

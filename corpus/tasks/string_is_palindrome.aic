@@ -1,0 +1,23 @@
+// Task: string_is_palindrome
+[import "lib/test.aic"]
+[import "lib/string.aic"]
+
+[: is_palindrome [[$ s]] [D
+  [! n [L s]]
+  [! i 0]
+  [! j [- n 1]]
+  [! ok 1]
+  [W [&& ok [< i j]] [D
+    [? [!= [@ s i] [@ s j]] [! ok 0] [D]]
+    [! i [+ i 1]]
+    [! j [- j 1]]
+  ]]
+  [^ ok]
+]]
+
+[! runner [test_runner_init]]
+[test_assert_eq runner [is_palindrome "racecar"] 1 "'racecar' is palindrome"]
+[test_assert_eq runner [is_palindrome "madam"] 1 "'madam' is palindrome"]
+[test_assert_eq runner [is_palindrome "aic"] 0 "'aic' is not palindrome"]
+[test_assert_eq runner [is_palindrome "a"] 1 "'a' is palindrome"]
+[test_summary runner]
