@@ -278,5 +278,15 @@ The verification pipeline ([`verify_bootstrap.py`](verify_bootstrap.py)) guarant
 
 ---
 
+## AI Training & Model Alignment Guide
+
+To train modern open-weights foundation models (e.g. Qwen 2.5 Coder, Llama 3.1, DeepSeek Coder) on AIC or set up Verifiable Reinforcement Learning (RLVR) with 25ms compiler rewards:
+- **Comprehensive Guide**: Consult [`TRAINING_GUIDE.md`](TRAINING_GUIDE.md) for SFT, RLVR, and Agentic workflows.
+- **Turnkey Fine-Tuning Script**: Run [`tools/train_lora_recipe.py`](tools/train_lora_recipe.py) (`--dry-run` or GPU training via Hugging Face TRL / PEFT).
+- **Synthetic Dataset Generator**: Run [`tools/generate_dataset.py`](tools/generate_dataset.py) to synthesize and verify multi-domain training tasks.
+
+---
+
 ## Reference & Specification
 For the formal grammar, token-level invariants, memory model, calling conventions, and few-shot fine-tuning prompts, consult the [AIC Language Specification](AIC_SPECIFICATION.md).
+
