@@ -2,18 +2,53 @@
 // AIC Native Interactive Mandelbrot Fractal Explorer (x86-64 Native)
 // File: examples/09_interactive_mandelbrot.aic
 //
-// Fixed-Point Arithmetic Specification:
-//   SCALE = 100,000 (1.0 = 100000, 4.0 = 400000).
-//   Eliminates all floating-point hardware dependencies while maintaining
-//   sub-pixel accuracy and preventing 64-bit integer overflow.
+// Fixed-point 64-bit Mandelbrot engine with a clean, minimal interface.
+// Scale: 100,000 (1.0 = 100,000). No floating point, zero dependencies.
 // =============================================================================
 
 // Viewport navigation state container
-[:: ViewState cx cy zoom_pct max_iter cols rows]
+[:: ViewState cx cy zoom_pct max_iter cols rows preset_id]
 
 // -----------------------------------------------------------------------------
-// compute_pixel: Evaluates Mandelbrot escape dynamics at (c0x, c0y).
-// Returns ASCII character byte from luminance ramp: " .:-=+*#%@"
+// format_zoom: Converts integer percentage to human-friendly "Nx" magnification
+// -----------------------------------------------------------------------------
+[: [$ format_zoom] [zoom_pct]
+  [D
+    [! zx [/ zoom_pct 100]]
+    [? [< zx 1] [! zx 1] 0]
+    [! s [N zx]]
+    [! slen [L s]]
+    [! buf [H [+ slen 2]]]
+    [! i 0]
+    [W [< i slen]
+      [D
+        [@! buf i [@ s i]]
+        [! i [+ i 1]]
+      ]
+    ]
+    [@! buf slen 120]      // 'x'
+    [@! buf [+ slen 1] 0]  // null terminator
+    [^ buf]
+  ]
+]
+
+// -----------------------------------------------------------------------------
+// get_location_name: Maps preset identifiers to friendly landmark labels
+// -----------------------------------------------------------------------------
+[: [$ get_location_name] [preset_id]
+  [D
+    [! name "Main Set"]
+    [? [== preset_id 1] [! name "Seahorse Valley"] 0]
+    [? [== preset_id 2] [! name "Elephant Valley"] 0]
+    [? [== preset_id 3] [! name "Mini-Brot"] 0]
+    [? [== preset_id 4] [! name "Filaments"] 0]
+    [^ name]
+  ]
+]
+
+
+// -----------------------------------------------------------------------------
+// compute_pixel: 64-bit fixed-point Mandelbrot escape dynamics
 // -----------------------------------------------------------------------------
 [: compute_pixel [c0x c0y max_iter ramp]
   [D
@@ -22,13 +57,13 @@
     [! iter 0]
     [! escaped 0]
 
-    // Iterate z = z^2 + c in 64-bit fixed point (SCALE = 100,000)
+    // Fixed-point iteration loop (SCALE = 100,000)
     [W [? [< iter max_iter] [? [== escaped 0] 1 0] 0]
       [D
         [! xx [/ [* zx zx] 100000]]
         [! yy [/ [* zy zy] 100000]]
 
-        // Escape radius test: |z|^2 > 4.0 (400,000 in fixed-point)
+        // Escape threshold: |z|^2 > 4.0 (400,000)
         [? [> [+ xx yy] 400000]
           [! escaped 1]
           [D
@@ -41,8 +76,7 @@
       ]
     ]
 
-    // Points inside set render as space (32) for deep silhouette contrast.
-    // Escaped boundary points map proportionally into 10-char luminance ramp.
+    // Inside set: space (32). Outside: gradient ramp
     [! out_ch 32]
     [? [== escaped 0]
       [! out_ch 32]
@@ -58,45 +92,54 @@
 ]
 
 // -----------------------------------------------------------------------------
-// apply_command: Dispatches pan, zoom, preset, and reset operations.
-// Automatically normalizes uppercase letters to lowercase.
+// apply_command: Dispatches navigation and updates preset label
 // -----------------------------------------------------------------------------
 [: apply_command [view raw_cmd]
   [D
     [! zoom_pct [@@.ViewState:zoom_pct view]]
-
-    // Dynamic pan step inversely proportional to zoom magnification
     [! pan_step [/ [* 40000 100] zoom_pct]]
     [? [< pan_step 1] [! pan_step 1] 0]
 
-    // Convert uppercase ASCII [65-90] to lowercase [97-122]
+    // Normalize [A-Z] to [a-z]
     [! c [? [< raw_cmd 65] raw_cmd [? [> raw_cmd 90] raw_cmd [+ raw_cmd 32]]]]
 
-    // Pan Up: 'w' (ASCII 119)
+    // Pan Up ('w')
     [? [== c 119]
-      [@@!.ViewState:cy view [- [@@.ViewState:cy view] pan_step]]
+      [D
+        [@@!.ViewState:cy view [- [@@.ViewState:cy view] pan_step]]
+        [@@!.ViewState:preset_id view 4]
+      ]
       0
     ]
 
-    // Pan Down: 's' (ASCII 115)
+    // Pan Down ('s')
     [? [== c 115]
-      [@@!.ViewState:cy view [+ [@@.ViewState:cy view] pan_step]]
+      [D
+        [@@!.ViewState:cy view [+ [@@.ViewState:cy view] pan_step]]
+        [@@!.ViewState:preset_id view 4]
+      ]
       0
     ]
 
-    // Pan Left: 'a' (ASCII 97)
+    // Pan Left ('a')
     [? [== c 97]
-      [@@!.ViewState:cx view [- [@@.ViewState:cx view] pan_step]]
+      [D
+        [@@!.ViewState:cx view [- [@@.ViewState:cx view] pan_step]]
+        [@@!.ViewState:preset_id view 4]
+      ]
       0
     ]
 
-    // Pan Right: 'd' (ASCII 100)
+    // Pan Right ('d')
     [? [== c 100]
-      [@@!.ViewState:cx view [+ [@@.ViewState:cx view] pan_step]]
+      [D
+        [@@!.ViewState:cx view [+ [@@.ViewState:cx view] pan_step]]
+        [@@!.ViewState:preset_id view 4]
+      ]
       0
     ]
 
-    // Zoom In: '+' (ASCII 43) or '=' (ASCII 61) -> +50%
+    // Zoom In ('+' or '=')
     [? [? [== c 43] 1 [== c 61]]
       [D
         [! nz [/ [* zoom_pct 150] 100]]
@@ -105,7 +148,7 @@
       0
     ]
 
-    // Zoom Out: '-' (ASCII 45) or '_' (ASCII 95) -> -33% (min 50%)
+    // Zoom Out ('-' or '_')
     [? [? [== c 45] 1 [== c 95]]
       [D
         [! nz [/ [* zoom_pct 100] 150]]
@@ -115,46 +158,50 @@
       0
     ]
 
-    // Preset 1: Seahorse Valley ('1' = ASCII 49)
+    // Preset 1: Seahorse Valley ('1')
     [? [== c 49]
       [D
         [@@!.ViewState:cx view -74360]
         [@@!.ViewState:cy view 13180]
         [@@!.ViewState:zoom_pct view 800]
         [@@!.ViewState:max_iter view 48]
+        [@@!.ViewState:preset_id view 1]
       ]
       0
     ]
 
-    // Preset 2: Elephant Valley ('2' = ASCII 50)
+    // Preset 2: Elephant Valley ('2')
     [? [== c 50]
       [D
         [@@!.ViewState:cx view 27500]
         [@@!.ViewState:cy view 0]
         [@@!.ViewState:zoom_pct view 400]
         [@@!.ViewState:max_iter view 36]
+        [@@!.ViewState:preset_id view 2]
       ]
       0
     ]
 
-    // Preset 3: Satellite Mini-Mandelbrot ('3' = ASCII 51)
+    // Preset 3: Mini-Brot Satellite ('3')
     [? [== c 51]
       [D
         [@@!.ViewState:cx view -175000]
         [@@!.ViewState:cy view 0]
         [@@!.ViewState:zoom_pct view 600]
         [@@!.ViewState:max_iter view 40]
+        [@@!.ViewState:preset_id view 3]
       ]
       0
     ]
 
-    // Reset to Origin Overview: 'r' (ASCII 114)
+    // Reset ('r')
     [? [== c 114]
       [D
         [@@!.ViewState:cx view -75000]
         [@@!.ViewState:cy view 0]
         [@@!.ViewState:zoom_pct view 100]
         [@@!.ViewState:max_iter view 32]
+        [@@!.ViewState:preset_id view 0]
       ]
       0
     ]
@@ -164,7 +211,7 @@
 ]
 
 // -----------------------------------------------------------------------------
-// render_frame: Renders telemetry HUD header, raster fractal grid, and controls.
+// render_frame: Sleek single-line status bar and clean fractal canvas
 // -----------------------------------------------------------------------------
 [: render_frame [view]
   [D
@@ -174,27 +221,24 @@
     [! max_iter [@@.ViewState:max_iter view]]
     [! cols [@@.ViewState:cols view]]
     [! rows [@@.ViewState:rows view]]
+    [! preset_id [@@.ViewState:preset_id view]]
 
-    // ASCII Luminance ramp: index 0 (dim/far) to index 9 (dense/boundary)
     [! ramp " .:-=+*#%@"]
 
-    // Compute dynamic step sizes with aspect ratio correction
+    // Compute dynamic step sizes
     [! step_x [/ [* 350000 100] [* cols zoom_pct]]]
     [! step_y [/ [* 200000 100] [* rows zoom_pct]]]
     [! start_x [- cx [/ [* cols step_x] 2]]]
     [! start_y [- cy [/ [* rows step_y] 2]]]
 
-    // Allocate byte line buffer (+1 for null terminator)
     [! row_buf [H [+ cols 1]]]
 
-    // Telemetry HUD Top Bar
-    [. "+------------------------------------------------------------+"]
-    [. "| AIC NATIVE FIXED-POINT MANDELBROT ENGINE (x86-64)          |"]
-    [. "+------------------------------------------------------------+"]
-    [. "| Center: (" [N cx] "," [N cy] ") | Zoom:" [N zoom_pct] "% | Iter:" [N max_iter] "|"]
-    [. "+------------------------------------------------------------+"]
+    // Minimal, elegant status bar
+    [! loc [get_location_name preset_id]]
+    [! zm [format_zoom zoom_pct]]
+    [. "--- [ Mandelbrot Explorer ] | Preset:" loc "| Zoom:" zm "---"]
 
-    // Raster Grid Rendering
+    // Fractal Canvas
     [! r 0]
     [W [< r rows]
       [D
@@ -208,30 +252,25 @@
             [! c [+ c 1]]
           ]
         ]
-        // Null-terminate row buffer and print to terminal
         [@! row_buf cols 0]
         [. row_buf]
         [! r [+ r 1]]
       ]
     ]
-
-    // Interactive Navigation Reference Bar
-    [. "+------------------------------------------------------------+"]
-    [. "| [W/S] Pan Y | [A/D] Pan X | [+/-] Zoom | [1-3] Preset | [R] |"]
-    [. "+------------------------------------------------------------+"]
+    [. ""]
     [^ 0]
   ]
 ]
 
 // -----------------------------------------------------------------------------
-// main: Entry point supporting both CLI argument scripting and automated tour.
+// main: Entry point with guided showcase and friendly control guide
 // -----------------------------------------------------------------------------
 [: main []
   [D
-    // Initialize default ViewState: Cx = -0.75, Cy = 0.0, Zoom = 100%, 60x22 grid
-    [! view [ViewState -75000 0 100 32 60 22]]
+    // Compact 60x18 canvas: fits cleanly in any standard terminal
+    [! view [ViewState -75000 0 100 32 60 18 0]]
 
-    // Check command line argument for automated scripting
+    // Check CLI argument for scripting
     [! cmd_arg [A 1]]
     [! has_arg 0]
     [? [!= cmd_arg 0]
@@ -243,11 +282,9 @@
     ]
 
     [? [== has_arg 1]
-      // Scripted Execution Mode: Apply all commands from CLI argument string
+      // Scripted Mode
       [D
-        [. "============================================================"]
-        [. ">>> EXECUTING SCRIPTED COMMAND CHAIN:" cmd_arg "<<<"]
-        [. "============================================================"]
+        [. ">> Exploring script:" cmd_arg]
         [! i 0]
         [! cmd_len [L cmd_arg]]
         [W [< i cmd_len]
@@ -259,62 +296,42 @@
         ]
         [render_frame view]
       ]
-      // Interactive Guided Tour Mode: Multi-stage architectural showcase
+      // Streamlined Guided Tour
       [D
-        // Tour Stage 1: Full Overview
-        [. "============================================================"]
-        [. ">>> TOUR STAGE 1: Full Overview (Cardioid & Antenna)        <<<"]
-        [. "============================================================"]
+        // Step 1
+        [. ">> Step 1/4: The Full Fractal (Overview)"]
         [render_frame view]
 
-        // Tour Stage 2: Seahorse Valley Preset (Zoom 2x)
-        [. "============================================================"]
-        [. ">>> TOUR STAGE 2: Preset 1 - Seahorse Valley Deep Zoom     <<<"]
-        [. "============================================================"]
+        // Step 2
+        [. ">> Step 2/4: Seahorse Valley (Zoomed in 2x)"]
         [apply_command view 49]
         [apply_command view 43]
         [apply_command view 43]
         [render_frame view]
 
-        // Tour Stage 3: Filament Exploration Pan Maneuver
-        [. "============================================================"]
-        [. ">>> TOUR STAGE 3: Exploring Spiral Filaments (Pan Up/Right) <<<"]
-        [. "============================================================"]
+        // Step 3
+        [. ">> Step 3/4: Exploring the Filaments"]
         [apply_command view 119]
         [apply_command view 119]
         [apply_command view 100]
         [render_frame view]
 
-        // Tour Stage 4: Satellite Mini-Mandelbrot
-        [. "============================================================"]
-        [. ">>> TOUR STAGE 4: Preset 3 - Self-Similar Satellite Brot    <<<"]
-        [. "============================================================"]
+        // Step 4
+        [. ">> Step 4/4: Mini-Mandelbrot Satellite"]
         [apply_command view 51]
         [apply_command view 43]
         [render_frame view]
 
-        // Tour Stage 5: Navigation Reference Guide
-        [. "============================================================"]
-        [. ">>> AIC MANDELBROT INTERACTIVE NAVIGATION CHEAT SHEET       <<<"]
-        [. "============================================================"]
-        [. "Pass a command sequence argument to navigate to any view:"]
-        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"<commands>\""]
+        // Friendly Quick Reference Guide
+        [. "=== Quick Controls ==="]
+        [. "  W / A / S / D  : Move Up / Left / Down / Right"]
+        [. "  + / -          : Zoom In / Zoom Out"]
+        [. "  1, 2, 3        : Jump to spots (1: Seahorse, 2: Elephant, 3: Mini-Set)"]
+        [. "  R              : Reset view"]
         [. ""]
-        [. "Keymap Reference:"]
-        [. "  W / S : Pan view up / down     (adjusts Cy)"]
-        [. "  A / D : Pan view left / right   (adjusts Cx)"]
-        [. "  + / = : Zoom in  (+50% magnification)"]
-        [. "  - / _ : Zoom out (-33% magnification)"]
-        [. "  1     : Jump to Seahorse Valley (Cx=-0.74360, Cy=0.13180)"]
-        [. "  2     : Jump to Elephant Valley (Cx=0.27500,  Cy=0.00000)"]
-        [. "  3     : Jump to Satellite Mini  (Cx=-1.75000, Cy=0.00000)"]
-        [. "  R     : Reset origin & zoom     (Cx=-0.75000, Cy=0.00000)"]
-        [. ""]
-        [. "Example Navigation Scripts:"]
-        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"1++ww\""]
-        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"2++++\""]
-        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"3+++dd\""]
-        [. "============================================================"]
+        [. "=== How to Explore ==="]
+        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"1++\"   (Jump to Seahorse & zoom in)"]
+        [. "  aic.exe 09_interactive_mandelbrot.aic -- \"www+\"   (Pan up and zoom)"]
       ]
     ]
     [^ 0]
