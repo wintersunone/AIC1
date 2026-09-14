@@ -1,0 +1,61 @@
+// lib/math.aic - Standard Mathematical Functions for AIC
+
+[: math_abs [n] [D
+  [? [< n 0] [^ [- 0 n]] [^ n]]
+]]
+
+[: math_min [a b] [D
+  [? [< a b] [^ a] [^ b]]
+]]
+
+[: math_max [a b] [D
+  [? [> a b] [^ a] [^ b]]
+]]
+
+[: math_clamp [x lo hi] [D
+  [? [< x lo] [^ lo] [? [> x hi] [^ hi] [^ x]]]
+]]
+
+[: math_pow [base exp] [D
+  [? [< exp 0] [^ 0] [D]]
+  [? [== exp 0] [^ 1] [D]]
+  [! res 1]
+  [! b base]
+  [! e exp]
+  [W [> e 0] [D
+    [? [!= [& e 1] 0] [! res [* res b]] [D]]
+    [! b [* b b]]
+    [! e [>> e 1]]
+  ]]
+  [^ res]
+]]
+
+[: math_gcd [a b] [D
+  [! x [math_abs a]]
+  [! y [math_abs b]]
+  [W [!= y 0] [D
+    [! t [% x y]]
+    [! x y]
+    [! y t]
+  ]]
+  [^ x]
+]]
+
+[: math_lcm [a b] [D
+  [? [|| [== a 0] [== b 0]] [^ 0] [D]]
+  [! g [math_gcd a b]]
+  [^ [/ [* [math_abs a] [math_abs b]] g]]
+]]
+
+[: math_sqrt [n] [D
+  [? [< n 0] [^ -1] [D]]
+  [? [== n 0] [^ 0] [D]]
+  [? [< n 4] [^ 1] [D]]
+  [! x n]
+  [! y [/ [+ x 1] 2]]
+  [W [< y x] [D
+    [! x y]
+    [! y [/ [+ x [/ n x]] 2]]
+  ]]
+  [^ x]
+]]

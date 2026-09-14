@@ -314,6 +314,13 @@ class Assembler:
             r2 = ops[1][1]
             return bytes([rex(w=1, r=r1>=8, b=r2>=8), 0x85, modrm(3, r1, r2)])
 
+        if m == 'testb':
+            r1 = ops[0][1]
+            r2 = ops[1][1]
+            need_rex = (r1 >= 4 or r2 >= 4)
+            prefix = [rex(w=0, r=r1>=8, b=r2>=8)] if need_rex else []
+            return bytes(prefix + [0x84, modrm(3, r1, r2)])
+
         if m == 'imulq':
             if ops[0][0] == 'imm':
                 imm = ops[0][1]
@@ -766,6 +773,56 @@ aic_atoi:
     je      .Latoi_ret
     negq    %rax
 .Latoi_ret:
+    ret
+
+aic_strtol:
+    jmp     aic_atoi
+
+aic_time:
+    movq    $201, %rax
+    syscall
+    ret
+
+aic_sprintf:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    subq    $32, %rsp
+    movq    %rdx, %rax
+    leaq    30(%rsp), %r8
+    movb    $0, 1(%r8)
+    movq    $0, %r9
+    testq   %rax, %rax
+    jge     .Lsp_pos
+    negq    %rax
+    movq    $1, %r9
+.Lsp_pos:
+    movq    $10, %rcx
+.Lsp_loop:
+    xorq    %rdx, %rdx
+    divq    %rcx
+    addb    $48, %dl
+    movb    %dl, (%r8)
+    decq    %r8
+    testq   %rax, %rax
+    jne     .Lsp_loop
+    testq   %r9, %r9
+    je      .Lsp_copy
+    movb    $45, (%r8)
+    decq    %r8
+.Lsp_copy:
+    incq    %r8
+    movq    $0, %rax
+.Lsp_copy_loop:
+    movb    (%r8), %dl
+    testb   %dl, %dl
+    je      .Lsp_done
+    movb    %dl, (%rdi,%rax)
+    incq    %r8
+    incq    %rax
+    jmp     .Lsp_copy_loop
+.Lsp_done:
+    movb    $0, (%rdi,%rax)
+    leave
     ret
 
 .data

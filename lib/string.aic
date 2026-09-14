@@ -1,0 +1,101 @@
+// lib/string.aic - Standard String Operations for AIC
+
+[: str_len [[$ s]] [D
+  [^ [L s]]
+]]
+
+[: str_char_at [[$ s] i] [D
+  [! n [L s]]
+  [? [|| [< i 0] [>= i n]] [^ 0] [D]]
+  [^ [@ s i]]
+]]
+
+[: str_eq [[$ s1] [$ s2]] [D
+  [! l1 [L s1]]
+  [! l2 [L s2]]
+  [? [!= l1 l2] [^ 0] [D]]
+  [! i 0]
+  [! diff 0]
+  [W [&& [== diff 0] [< i l1]] [D
+    [? [!= [@ s1 i] [@ s2 i]] [! diff 1] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ [? [== diff 0] 1 0]]
+]]
+
+[: str_cmp [[$ s1] [$ s2]] [D
+  [! l1 [L s1]]
+  [! l2 [L s2]]
+  [! min_len [? [< l1 l2] l1 l2]]
+  [! i 0]
+  [! res 0]
+  [W [&& [== res 0] [< i min_len]] [D
+    [! c1 [@ s1 i]]
+    [! c2 [@ s2 i]]
+    [? [!= c1 c2] [! res [- c1 c2]] [D]]
+    [! i [+ i 1]]
+  ]]
+  [? [!= res 0] [^ res] [D]]
+  [^ [- l1 l2]]
+]]
+
+[: [$ str_cat] [[$ s1] [$ s2]] [D
+  [! l1 [L s1]]
+  [! l2 [L s2]]
+  [! total [+ l1 l2]]
+  [! buf [H total]]
+  [@> l1 [i] [D
+    [@! buf i [@ s1 i]]
+  ]]
+  [@> l2 [j] [D
+    [@! buf [+ l1 j] [@ s2 j]]
+  ]]
+  [@! buf total 0]
+  [^ buf]
+]]
+
+[: str_find [[$ s] ch] [D
+  [! n [L s]]
+  [! i 0]
+  [! pos -1]
+  [W [&& [== pos -1] [< i n]] [D
+    [? [== [@ s i] ch] [! pos i] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ pos]
+]]
+
+[: str_starts_with [[$ s] [$ prefix]] [D
+  [! slen [L s]]
+  [! plen [L prefix]]
+  [? [< slen plen] [^ 0] [D]]
+  [! i 0]
+  [! ok 1]
+  [W [&& [!= ok 0] [< i plen]] [D
+    [? [!= [@ s i] [@ prefix i]] [! ok 0] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ ok]
+]]
+
+[: str_ends_with [[$ s] [$ suffix]] [D
+  [! slen [L s]]
+  [! xlen [L suffix]]
+  [? [< slen xlen] [^ 0] [D]]
+  [! offset [- slen xlen]]
+  [! i 0]
+  [! ok 1]
+  [W [&& [!= ok 0] [< i xlen]] [D
+    [? [!= [@ s [+ offset i]] [@ suffix i]] [! ok 0] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ ok]
+]]
+
+[: [$ str_from_int] [n] [D
+  [^ [N n]]
+]]
+
+[: str_to_int [[$ s]] [D
+  [^ [V s]]
+]]

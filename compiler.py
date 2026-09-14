@@ -743,6 +743,8 @@ def _op_wordptrget(node, env):
         )
     raw = bytes(ord(c) & 0xFF for c in s[off:off + 8])
     handle = int.from_bytes(raw, byteorder="little", signed=False)
+    if handle == 0:
+        return 0
     if handle not in _PTR_REGISTRY:
         raise AICError(
             f"'@@$': word at index {idx} does not hold a valid pointer "
@@ -853,10 +855,33 @@ for _sym, _fn in BIN_OPS.items():
     OPS[_sym] = _make_binop(_fn)
 
 
+def read_source_with_imports(src_path, visited=None):
+    import os, re
+    if visited is None:
+        visited = set()
+    canonical = os.path.abspath(src_path)
+    if canonical in visited:
+        return ""
+    visited.add(canonical)
+    with open(src_path, "r", encoding="utf-8") as f:
+        source = f.read()
+    base_dir = os.path.dirname(canonical)
+    def replacer(match):
+        rel_path = match.group(1)
+        target = os.path.join(base_dir, rel_path)
+        if not os.path.exists(target):
+            target = os.path.abspath(rel_path)
+        if not os.path.exists(target):
+            raise AICError(f"Imported file '{rel_path}' not found")
+        return read_source_with_imports(target, visited)
+    pattern = re.compile(r'\[\s*(?:load|import)\s+"([^"]+)"\s*\]')
+    return pattern.sub(replacer, source)
+
+
 if __name__ == "__main__":
     _path = __import__('sys').argv[1] if len(__import__('sys').argv) > 1 else "code.aic"
-    with open(_path, "r", encoding="utf-8") as f: src = f.read()
     try:
+        src = read_source_with_imports(_path)
         tokens, lines = tokenize(src)
         global_scope = Scope()
         while tokens:

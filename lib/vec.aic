@@ -1,0 +1,62 @@
+// lib/vec.aic - Dynamic Growable Array (Vector) for AIC
+
+[:: Vec data len cap]
+
+[: [$ vec_new] [initial_cap] [D
+  [! c [? [<= initial_cap 0] 4 initial_cap]]
+  [! buf [H [* c 8]]]
+  [! v [Vec buf 0 c]]
+  [^ v]
+]]
+
+[: vec_len [[$ v]] [D
+  [^ [@@.Vec:len v]]
+]]
+
+[: vec_cap [[$ v]] [D
+  [^ [@@.Vec:cap v]]
+]]
+
+[: vec_get [[$ v] idx] [D
+  [! n [@@.Vec:len v]]
+  [? [|| [< idx 0] [>= idx n]] [^ 0] [D]]
+  [! data [@@$.Vec:data v]]
+  [^ [@@ data idx]]
+]]
+
+[: vec_set [[$ v] idx item] [D
+  [! n [@@.Vec:len v]]
+  [? [|| [< idx 0] [>= idx n]] [^ 0] [D]]
+  [! data [@@$.Vec:data v]]
+  [@@! data idx item]
+  [^ 1]
+]]
+
+[: vec_push [[$ v] item] [D
+  [! n [@@.Vec:len v]]
+  [! c [@@.Vec:cap v]]
+  [! data [@@$.Vec:data v]]
+  [? [>= n c] [D
+    [! new_c [* c 2]]
+    [! new_data [H [* new_c 8]]]
+    [@> n [i] [D
+      [@@! new_data i [@@ data i]]
+    ]]
+    [@@$!.Vec:data v new_data]
+    [@@!.Vec:cap v new_c]
+    [! data new_data]
+  ] [D]]
+  [@@! data n item]
+  [@@!.Vec:len v [+ n 1]]
+  [^ [+ n 1]]
+]]
+
+[: vec_pop [[$ v]] [D
+  [! n [@@.Vec:len v]]
+  [? [<= n 0] [^ 0] [D]]
+  [! new_n [- n 1]]
+  [! data [@@$.Vec:data v]]
+  [! val [@@ data new_n]]
+  [@@!.Vec:len v new_n]
+  [^ val]
+]]

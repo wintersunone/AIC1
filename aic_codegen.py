@@ -1639,9 +1639,31 @@ nl_only:
 {bridge_asm}"""
 
 
-def compile_file(src_path, asm_path):
+def read_source_with_imports(src_path, visited=None):
+    import os, re
+    if visited is None:
+        visited = set()
+    canonical = os.path.abspath(src_path)
+    if canonical in visited:
+        return ""
+    visited.add(canonical)
     with open(src_path, "r", encoding="utf-8") as f:
         source = f.read()
+    base_dir = os.path.dirname(canonical)
+    def replacer(match):
+        rel_path = match.group(1)
+        target = os.path.join(base_dir, rel_path)
+        if not os.path.exists(target):
+            target = os.path.abspath(rel_path)
+        if not os.path.exists(target):
+            raise CodegenError(f"Imported file '{rel_path}' not found")
+        return read_source_with_imports(target, visited)
+    pattern = re.compile(r'\[\s*(?:load|import)\s+"([^"]+)"\s*\]')
+    return pattern.sub(replacer, source)
+
+
+def compile_file(src_path, asm_path):
+    source = read_source_with_imports(src_path)
     tokens, lines = tokenize(source)
     program_nodes = []
     while tokens:

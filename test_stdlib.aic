@@ -1,0 +1,55 @@
+// test_stdlib.aic - Test standard library modules with imports
+
+[import "lib/math.aic"]
+[import "lib/string.aic"]
+[import "lib/vec.aic"]
+[import "lib/map.aic"]
+
+// 1. Math tests
+[! a [math_abs -99]]
+[! m1 [math_min 42 17]]
+[! m2 [math_max 42 17]]
+[! cl [math_clamp 150 0 100]]
+[! p [math_pow 2 10]]
+[! g [math_gcd 48 18]]
+[! l [math_lcm 12 18]]
+[! sq [math_sqrt 144]]
+[. "Math:" a m1 m2 cl p g l sq]
+
+// 2. String tests
+[! s1 "Hello, "]
+[! s2 "AIC!"]
+[! cat [str_cat s1 s2]]
+[! eq [str_eq s1 "Hello, "]]
+[! ch [str_char_at s1 0]]
+[! fnd [str_find s1 108]]
+[! sw [str_starts_with s1 "He"]]
+[! ew [str_ends_with s2 "IC!"]]
+[. "String:" cat eq ch fnd sw ew]
+
+// 3. Dynamic Vector tests
+[! v [vec_new 2]]
+[vec_push v 100]
+[vec_push v 200]
+[vec_push v 300]
+[vec_push v 400]
+[vec_push v 500]
+[! vlen [vec_len v]]
+[! vcap [vec_cap v]]
+[! elem2 [vec_get v 2]]
+[! popped [vec_pop v]]
+[! new_vlen [vec_len v]]
+[. "Vector:" vlen vcap elem2 popped new_vlen]
+
+// 4. Hash Map tests
+[! m [map_new 4]]
+[map_set m "apple" 10]
+[map_set m "banana" 20]
+[map_set m "cherry" 30]
+[map_set m "date" 40]
+[! mlen [map_len m]]
+[! v_apple [map_get m "apple"]]
+[! v_cherry [map_get m "cherry"]]
+[! has_banana [map_contains m "banana"]]
+[! has_grape [map_contains m "grape"]]
+[. "Map:" mlen v_apple v_cherry has_banana has_grape]

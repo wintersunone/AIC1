@@ -1896,6 +1896,71 @@
   [^ 0]
 ]]
 
+[§ [$ expand_source] [[$ src] n] [D
+  [! cur_src src]
+  [! cur_n n]
+  [! changed 1]
+  [W [!= changed 0] [D
+    [! changed 0]
+    [! p 0]
+    [! found -1]
+    [! path_st -1]
+    [! p_len 0]
+    [! p_end -1]
+    [W [&& [== found -1] [<= p [- cur_n 10]]] [D
+      [! c0 [@ cur_src p]]
+      [? [== c0 91] [D
+        [! is_imp 0]
+        [? [&& [== [@ cur_src [+ p 1]] 105] [&& [== [@ cur_src [+ p 2]] 109] [&& [== [@ cur_src [+ p 3]] 112] [&& [== [@ cur_src [+ p 4]] 111] [&& [== [@ cur_src [+ p 5]] 114] [&& [== [@ cur_src [+ p 6]] 116] [&& [== [@ cur_src [+ p 7]] 32] [== [@ cur_src [+ p 8]] 34]]]]]]]]
+          [D [! is_imp 1] [! path_st [+ p 9]]]
+          [D]]
+        [? [&& [== [@ cur_src [+ p 1]] 108] [&& [== [@ cur_src [+ p 2]] 111] [&& [== [@ cur_src [+ p 3]] 97] [&& [== [@ cur_src [+ p 4]] 100] [&& [== [@ cur_src [+ p 5]] 32] [== [@ cur_src [+ p 6]] 34]]]]]]
+          [D [! is_imp 1] [! path_st [+ p 7]]]
+          [D]]
+        [? [!= is_imp 0] [D
+          [! q path_st]
+          [W [&& [< q cur_n] [!= [@ cur_src q] 34]] [! q [+ q 1]]]
+          [? [< q cur_n] [D
+            [! pe [+ q 1]]
+            [W [&& [< pe cur_n] [!= [@ cur_src pe] 93]] [! pe [+ pe 1]]]
+            [? [< pe cur_n] [D
+              [! found p]
+              [! p_len [- q path_st]]
+              [! p_end pe]
+            ] [D]]
+          ] [D]]
+        ] [D]]
+      ] [D]]
+      [! p [+ p 1]]
+    ]]
+    [? [!= found -1] [D
+      [! lib_path [slice_str cur_src path_st p_len]]
+      [! lh [O lib_path "r"]]
+      [! ln [Z lh]]
+      [! lib_src [R lh ln]]
+      [X lh]
+      [! end_tok [+ p_end 1]]
+      [! suf_len [- cur_n end_tok]]
+      [! new_len [+ [+ found ln] [+ 1 suf_len]]]
+      [! new_buf [H new_len]]
+      [@> found [ci] [D
+        [@! new_buf ci [@ cur_src ci]]
+      ]]
+      [@> ln [li] [D
+        [@! new_buf [+ found li] [@ lib_src li]]
+      ]]
+      [@! new_buf [+ found ln] 10]
+      [@> suf_len [si] [D
+        [@! new_buf [+ [+ [+ found ln] 1] si] [@ cur_src [+ end_tok si]]]
+      ]]
+      [@! new_buf new_len 0]
+      [! cur_src new_buf]
+      [! cur_n new_len]
+      [! changed 1]
+    ] [D]]
+  ]]
+  [^ cur_src]
+]]
 
 [! in_path [A 1]]
 [! in_len [L in_path]]
@@ -1905,8 +1970,11 @@
 [? [== out_len 0] [! out_path "out.s"] [D]]
 
 [! h [O in_path "r"]]
-[! n [Z h]]
-[! src [R h n]]
+[! n_init [Z h]]
+[! raw_src [R h n_init]]
+[X h]
+[! src [expand_source raw_src n_init]]
+[! n [L src]]
 [! tokens [H [* [+ n 1] Token.bytes]]]
 [! i 0]
 [! tok_count 0]
@@ -1916,7 +1984,6 @@
 [! atom_start 0]
 [! c 0]
 [W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
-[X h]
 
 [! stack [H [* tok_count 8]]]
 [! match [H [* tok_count 8]]]

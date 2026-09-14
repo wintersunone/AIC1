@@ -182,8 +182,40 @@ def main():
     assert e_phnum >= 2, f"Expected at least 2 program headers, got {e_phnum}"
     print(f"    >>> LINUX ELF64 BINARY VALIDATED: Entry {e_entry:#x}, {e_phnum} PT_LOAD segments ({len(elf_bytes):,} bytes) <<<")
 
+    # 15. Standard Library & Modular Imports
+    run(["./aic.exe", "test_stdlib.aic", "test_stdlib_pipeline.s"],
+        "Stage 15a: Native aic.exe compiles test_stdlib.aic with modular imports -> test_stdlib_pipeline.s")
+
+    run([sys.executable, "tools/aic_pe_emitter.py", "test_stdlib_pipeline.s", "-o", "test_stdlib_pipeline.exe"],
+        "Stage 15b: Package test_stdlib_pipeline.exe (Direct PE emitter)")
+
+    p_stdlib = run(["./test_stdlib_pipeline.exe"],
+                   "Stage 15c: Execute native test_stdlib binary")
+    expected_stdlib = (
+        "Math: 99 17 42 100 1024 6 36 12\n"
+        "String: Hello, AIC! 1 72 2 1 1\n"
+        "Vector: 5 8 300 500 4\n"
+        "Map: 4 10 30 1 0\n"
+    )
+    out_stdlib = p_stdlib.stdout.replace("\r\n", "\n")
+    if out_stdlib != expected_stdlib:
+        print("[FAIL] test_stdlib output mismatch! Expected:")
+        print(repr(expected_stdlib))
+        print("Got:")
+        print(repr(out_stdlib))
+        sys.exit(1)
+    print("    >>> STANDARD LIBRARY (MATH, STRING, VEC, MAP) & MODULAR IMPORTS VERIFIED CLEAN <<<")
+
+    run([sys.executable, "tools/aic_elf_emitter.py", "test_stdlib_pipeline.s", "-o", "test_stdlib_pipeline.elf"],
+        "Stage 15d: Generate standalone Linux ELF64 binary test_stdlib_pipeline.elf")
+
+    with open("test_stdlib_pipeline.elf", "rb") as f_self:
+        elf_bytes = f_self.read()
+    assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
+    print(f"    >>> STDLIB LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
+
     print("\n" + "=" * 70)
-    print("ALL 14 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
+    print("ALL 15 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
     print(f"Compiler binary: aic.exe ({os.path.getsize('aic.exe'):,} bytes)")
     print("Zero external toolchain dependency (Windows PE & Linux ELF direct emitters).")
     print("=" * 70)
