@@ -136,6 +136,10 @@ def cmd_verify(args):
     import verify_bootstrap
     verify_bootstrap.main()
 
+def cmd_bench(args):
+    import benchmarks.speed.run_speed_benchmarks as speed_bench
+    speed_bench.main()
+
 def main():
     parser = argparse.ArgumentParser(
         description="AIC (AI Compiler / AI C) - Systems Language Engineered for Artificial Intelligence",
@@ -166,6 +170,10 @@ def main():
     # verify
     p_verify = subparsers.add_parser("verify", help="Run the full 18-stage self-hosting bootstrap verification pipeline")
     p_verify.set_defaults(func=cmd_verify)
+
+    # bench
+    p_bench = subparsers.add_parser("bench", help="Run execution speed benchmarks (AIC vs C GCC -O2 vs Node.js vs Python)")
+    p_bench.set_defaults(func=cmd_bench)
 
     args = parser.parse_args()
     args.func(args)

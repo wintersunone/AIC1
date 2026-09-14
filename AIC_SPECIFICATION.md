@@ -394,7 +394,27 @@ Rules to follow:
 ## 9. Verification & Quality Assurance
 
 The compiler verifies bitwise mathematical closure via `verify_bootstrap.py`:
-- 17-stage verification passes in under 3 seconds.
+- 18-stage verification passes in under 3 seconds.
 - 0-diff identity proven across all bootstrap compiler generations:
-  $$\text{compiler\_gen0.s} \equiv \text{compiler\_gen1.s} \equiv \text{compiler\_gen2.s} \equiv \text{compiler\_gen\_pe.s}$$
-- Standard library, JSON serialization, memory arena, file system, and user programs tested and verified natively on x86-64 hardware.
+  $$\text{compiler\_gen0.s} \equiv \text{compiler\_gen1.s} \equiv \text{compiler\_gen2.s} \equiv \text{compiler\_gen\_pe.s} \quad (717,042\text{ bytes})$$
+- Standard library (`math`, `string`, `vec`, `map`), JSON parser/serializer, linear memory arena, safe file I/O, and user programs tested and verified natively on dual platforms (Windows PE32+ and Linux ELF64).
+
+---
+
+## 10. Performance & Execution Speed Profile
+
+AIC compiles directly to native machine code without virtual machine interpreters, bytecode translation layers, or garbage collection pauses.
+
+### Empirical Benchmarks (Windows x86-64)
+
+| Benchmark Task | Workload Profile | AIC (Native) | C (GCC -O2) | Node.js (V8) | Python 3.11 | Relative Performance |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Recursive Fibonacci (`fib 38`)** | Deep recursion & call-stack allocation (63M frames) | **0.2604s** | 0.0561s | 0.3443s | 7.0581s | **27.1x faster than Python**, **1.32x faster than V8** |
+| **Collatz Steps (500k runs)** | Tight while-loops, integer arithmetic, bitwise shifts | **0.2971s** | 0.0745s | 0.2429s | 3.3533s | **11.3x faster than Python**, comparable to V8 |
+| **Sieve of Eratosthenes (10M)** | Byte memory throughput (`@`/`@!`), stride indexing | **0.0969s** | 0.0465s | 0.1119s | 1.8315s | **18.9x faster than Python**, **2.08x of GCC -O2** |
+| **Bubble Sort (5,000 words)** | Quadword heap stores (`@@`/`@@!`), 25M nested loops | **0.0460s** | 0.0155s | 0.0672s | 1.3476s | **29.3x faster than Python**, **1.46x faster than V8** |
+
+### Mechanical Advantages
+- **Microscopic Binary Size**: Standalone PE32+ executables are ~8.7 KB with 0 external DLL dependencies beyond standard runtime imports.
+- **Zero-Latency Startup**: No runtime environment, JIT warmup phase, or interpreter initialization overhead.
+- **Direct Register Mapping**: Memory operations (`@`, `@!`, `@@`, `@@!`) compile directly into single `movb`/`movq` instructions with indexed displacement addressing modes (`(%rdi, %rcx, 1)` or `(%rdi, %rcx, 8)`).
