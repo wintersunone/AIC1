@@ -1,0 +1,170 @@
+[import "lib/test.aic"]
+
+[:: MinHeap buf size cap]
+
+[: [$ heap_new] [cap]
+  [D
+    [! buf [H [* cap 8]]]
+    [! h [MinHeap buf 0 cap]]
+    [^ h]
+  ]
+]
+
+[: heap_peek [[$ h]]
+  [D
+    [! sz [@@.MinHeap:size h]]
+    [? [<= sz 0]
+      [^ -1]
+      [D
+        [! buf [@@.MinHeap:buf h]]
+        [^ [@@ buf 0]]
+      ]
+    ]
+  ]
+]
+
+[: heap_push [[$ h] val]
+  [D
+    [! buf [@@.MinHeap:buf h]]
+    [! sz [@@.MinHeap:size h]]
+    [@@! buf sz val]
+    [! idx sz]
+    [! new_sz [+ sz 1]]
+    [@@!.MinHeap:size h new_sz]
+    [W [> idx 0]
+      [D
+        [! parent [/ [- idx 1] 2]]
+        [! p_val [@@ buf parent]]
+        [! cur_val [@@ buf idx]]
+        [? [< cur_val p_val]
+          [D
+            [@@! buf idx p_val]
+            [@@! buf parent cur_val]
+            [! idx parent]
+          ]
+          [! idx 0]
+        ]
+      ]
+    ]
+    [^ new_sz]
+  ]
+]
+
+[: heap_pop [[$ h]]
+  [D
+    [! sz [@@.MinHeap:size h]]
+    [? [<= sz 0]
+      [^ -1]
+      [D
+        [! buf [@@.MinHeap:buf h]]
+        [! min_val [@@ buf 0]]
+        [! last_idx [- sz 1]]
+        [@@!.MinHeap:size h last_idx]
+        [? [== last_idx 0]
+          [^ min_val]
+          [D
+            [! last_val [@@ buf last_idx]]
+            [@@! buf 0 last_val]
+            [! idx 0]
+            [! running 1]
+            [W [== running 1]
+              [D
+                [! left [+ [* 2 idx] 1]]
+                [? [>= left last_idx]
+                  [! running 0]
+                  [D
+                    [! smallest left]
+                    [! right [+ [* 2 idx] 2]]
+                    [? [< right last_idx]
+                      [? [< [@@ buf right] [@@ buf left]]
+                        [! smallest right]
+                        0
+                      ]
+                      0
+                    ]
+                    [? [< [@@ buf smallest] [@@ buf idx]]
+                      [D
+                        [! tmp [@@ buf idx]]
+                        [@@! buf idx [@@ buf smallest]]
+                        [@@! buf smallest tmp]
+                        [! idx smallest]
+                      ]
+                      [! running 0]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+            [^ min_val]
+          ]
+        ]
+      ]
+    ]
+  ]
+]
+
+[: heapsort [arr n]
+  [D
+    [! h [heap_new n]]
+    [! i 0]
+    [W [< i n]
+      [D
+        [heap_push h [@@ arr i]]
+        [! i [+ i 1]]
+      ]
+    ]
+    [! j 0]
+    [W [< j n]
+      [D
+        [@@! arr j [heap_pop h]]
+        [! j [+ j 1]]
+      ]
+    ]
+    [^ 0]
+  ]
+]
+
+[: run_tests []
+  [D
+    [! runner [test_runner_init]]
+    [! h [heap_new 16]]
+
+    [heap_push h 45]
+    [heap_push h 12]
+    [heap_push h 89]
+    [heap_push h 3]
+    [heap_push h 24]
+    [heap_push h 7]
+
+    [test_assert_eq runner [heap_peek h] 3 "peek min is 3"]
+
+    [test_assert_eq runner [heap_pop h] 3 "pop min is 3"]
+    [test_assert_eq runner [heap_pop h] 7 "pop min is 7"]
+    [test_assert_eq runner [heap_pop h] 12 "pop min is 12"]
+    [test_assert_eq runner [heap_pop h] 24 "pop min is 24"]
+    [test_assert_eq runner [heap_pop h] 45 "pop min is 45"]
+    [test_assert_eq runner [heap_pop h] 89 "pop min is 89"]
+
+    [! arr [H [* 6 8]]]
+    [@@! arr 0 50]
+    [@@! arr 1 10]
+    [@@! arr 2 40]
+    [@@! arr 3 20]
+    [@@! arr 4 60]
+    [@@! arr 5 30]
+
+    [heapsort arr 6]
+
+    [test_assert_eq runner [@@ arr 0] 10 "sorted arr[0] == 10"]
+    [test_assert_eq runner [@@ arr 1] 20 "sorted arr[1] == 20"]
+    [test_assert_eq runner [@@ arr 2] 30 "sorted arr[2] == 30"]
+    [test_assert_eq runner [@@ arr 3] 40 "sorted arr[3] == 40"]
+    [test_assert_eq runner [@@ arr 4] 50 "sorted arr[4] == 50"]
+    [test_assert_eq runner [@@ arr 5] 60 "sorted arr[5] == 60"]
+
+    [test_summary runner]
+    [^ 0]
+  ]
+]
+
+[run_tests]

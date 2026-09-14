@@ -26,3 +26,4 @@ python aic.py build examples/<filename>.aic --target elf -o app.elf
 | [`03_records.aic`](03_records.aic) | Zero-cost S-records (`::`), automatic constructors, field getters (`@@.Record:field`), field setters (`@@!.Record:field`), and bulk stores (`@@!.Record`). |
 | [`04_json_toolcall.aic`](04_json_toolcall.aic) | Pure-AIC JSON parser & serializer (`lib/json.aic`), building structured AI tool-call payloads, and parsing dynamic responses. |
 | [`05_system_arena.aic`](05_system_arena.aic) | Linear bump memory allocator (`lib/arena.aic`), $O(1)$ bulk resets, and safe file I/O operations (`lib/io.aic`). |
+| [`06_min_heap.aic`](06_min_heap.aic) | Bare-metal Binary Min-Heap Priority Queue & HeapSort with raw 64-bit word operations (`@@`, `@@!`). |
