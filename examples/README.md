@@ -27,3 +27,4 @@ python aic.py build examples/<filename>.aic --target elf -o app.elf
 | [`04_json_toolcall.aic`](04_json_toolcall.aic) | Pure-AIC JSON parser & serializer (`lib/json.aic`), building structured AI tool-call payloads, and parsing dynamic responses. |
 | [`05_system_arena.aic`](05_system_arena.aic) | Linear bump memory allocator (`lib/arena.aic`), $O(1)$ bulk resets, and safe file I/O operations (`lib/io.aic`). |
 | [`06_min_heap.aic`](06_min_heap.aic) | Bare-metal Binary Min-Heap Priority Queue & HeapSort with raw 64-bit word operations (`@@`, `@@!`). |
+| [`07_bytecode_vm.aic`](07_bytecode_vm.aic) | 64-bit Stack-Based Bytecode Virtual Machine with 15 opcodes, registers, call stack, and loops. |

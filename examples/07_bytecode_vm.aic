@@ -1,0 +1,345 @@
+[import "lib/test.aic"]
+
+[:: VM code code_len pc stack sp call_stack csp regs running]
+
+[: [$ vm_new] [code code_len]
+  [D
+    [! stack [H [* 256 8]]]
+    [! call_stack [H [* 64 8]]]
+    [! regs [H [* 8 8]]]
+    [! i 0]
+    [W [< i 8]
+      [D
+        [@@! regs i 0]
+        [! i [+ i 1]]
+      ]
+    ]
+    [! vm [VM code code_len 0 stack 0 call_stack 0 regs 1]]
+    [^ vm]
+  ]
+]
+
+[: vm_push [[$ vm] val]
+  [D
+    [! stack [@@.VM:stack vm]]
+    [! sp [@@.VM:sp vm]]
+    [@@! stack sp val]
+    [@@!.VM:sp vm [+ sp 1]]
+  ]
+]
+
+[: vm_pop [[$ vm]]
+  [D
+    [! stack [@@.VM:stack vm]]
+    [! sp [- [@@.VM:sp vm] 1]]
+    [@@!.VM:sp vm sp]
+    [^ [@@ stack sp]]
+  ]
+]
+
+[: vm_step [[$ vm]]
+  [D
+    [! pc [@@.VM:pc vm]]
+    [! code_len [@@.VM:code_len vm]]
+    [? [>= pc code_len]
+      [D
+        [@@!.VM:running vm 0]
+        [^ 0]
+      ]
+      0
+    ]
+
+    [! code [@@.VM:code vm]]
+    [! op [@@ code pc]]
+    [! next_pc [+ pc 1]]
+    [@@!.VM:pc vm next_pc]
+
+    [? [== op 0]
+      [@@!.VM:running vm 0]
+      0
+    ]
+
+    [? [== op 1]
+      [D
+        [! val [@@ code next_pc]]
+        [@@!.VM:pc vm [+ next_pc 1]]
+        [vm_push vm val]
+      ]
+      0
+    ]
+
+    [? [== op 2]
+      [D
+        [vm_pop vm]
+      ]
+      0
+    ]
+
+    [? [== op 3]
+      [D
+        [! b [vm_pop vm]]
+        [! a [vm_pop vm]]
+        [vm_push vm [+ a b]]
+      ]
+      0
+    ]
+
+    [? [== op 4]
+      [D
+        [! b [vm_pop vm]]
+        [! a [vm_pop vm]]
+        [vm_push vm [- a b]]
+      ]
+      0
+    ]
+
+    [? [== op 5]
+      [D
+        [! b [vm_pop vm]]
+        [! a [vm_pop vm]]
+        [vm_push vm [* a b]]
+      ]
+      0
+    ]
+
+    [? [== op 6]
+      [D
+        [! b [vm_pop vm]]
+        [! a [vm_pop vm]]
+        [vm_push vm [/ a b]]
+      ]
+      0
+    ]
+
+    [? [== op 7]
+      [D
+        [! b [vm_pop vm]]
+        [! a [vm_pop vm]]
+        [vm_push vm [? [== a b] 1 0]]
+      ]
+      0
+    ]
+
+    [? [== op 8]
+      [D
+        [! reg_id [@@ code next_pc]]
+        [@@!.VM:pc vm [+ next_pc 1]]
+        [! val [vm_pop vm]]
+        [! regs [@@.VM:regs vm]]
+        [@@! regs reg_id val]
+      ]
+      0
+    ]
+
+    [? [== op 9]
+      [D
+        [! reg_id [@@ code next_pc]]
+        [@@!.VM:pc vm [+ next_pc 1]]
+        [! regs [@@.VM:regs vm]]
+        [vm_push vm [@@ regs reg_id]]
+      ]
+      0
+    ]
+
+    [? [== op 10]
+      [D
+        [! target [@@ code next_pc]]
+        [@@!.VM:pc vm target]
+      ]
+      0
+    ]
+
+    [? [== op 11]
+      [D
+        [! target [@@ code next_pc]]
+        [! cond [vm_pop vm]]
+        [? [== cond 0]
+          [@@!.VM:pc vm target]
+          [@@!.VM:pc vm [+ next_pc 1]]
+        ]
+      ]
+      0
+    ]
+
+    [? [== op 12]
+      [D
+        [! target [@@ code next_pc]]
+        [! cond [vm_pop vm]]
+        [? [!= cond 0]
+          [@@!.VM:pc vm target]
+          [@@!.VM:pc vm [+ next_pc 1]]
+        ]
+      ]
+      0
+    ]
+
+    [? [== op 13]
+      [D
+        [! target [@@ code next_pc]]
+        [! ret_addr [+ next_pc 1]]
+        [! cstack [@@.VM:call_stack vm]]
+        [! csp [@@.VM:csp vm]]
+        [@@! cstack csp ret_addr]
+        [@@!.VM:csp vm [+ csp 1]]
+        [@@!.VM:pc vm target]
+      ]
+      0
+    ]
+
+    [? [== op 14]
+      [D
+        [! cstack [@@.VM:call_stack vm]]
+        [! csp [- [@@.VM:csp vm] 1]]
+        [@@!.VM:csp vm csp]
+        [! ret_addr [@@ cstack csp]]
+        [@@!.VM:pc vm ret_addr]
+      ]
+      0
+    ]
+
+    [^ 0]
+  ]
+]
+
+[: vm_run [[$ vm] max_steps]
+  [D
+    [! steps 0]
+    [W [& [== [@@.VM:running vm] 1] [< steps max_steps]]
+      [D
+        [vm_step vm]
+        [! steps [+ steps 1]]
+      ]
+    ]
+    [! sp [@@.VM:sp vm]]
+    [? [> sp 0]
+      [^ [@@ [@@.VM:stack vm] [- sp 1]]]
+      [^ 0]
+    ]
+  ]
+]
+
+[: run_gradient_tests []
+  [D
+    [! runner [test_runner_init]]
+
+    ;; Tier 1 Test (Stack Basics - 20 pts)
+    ;; Bytecode: [PUSH 42, PUSH 58, POP, HALT]
+    [! c1 [H [* 6 8]]]
+    [@@! c1 0 1]
+    [@@! c1 1 42]
+    [@@! c1 2 1]
+    [@@! c1 3 58]
+    [@@! c1 4 2]
+    [@@! c1 5 0]
+    [! vm1 [vm_new c1 6]]
+    [! r1 [vm_run vm1 1000]]
+    [test_assert_eq runner r1 42 "Tier 1: Stack Basics top == 42"]
+
+    ;; Tier 2 Test (ALU Arithmetic - 20 pts)
+    ;; Bytecode: (100 - 40) * 3 / 2 == 90
+    ;; [PUSH 100, PUSH 40, SUB, PUSH 3, MUL, PUSH 2, DIV, HALT]
+    [! c2 [H [* 12 8]]]
+    [@@! c2 0 1]
+    [@@! c2 1 100]
+    [@@! c2 2 1]
+    [@@! c2 3 40]
+    [@@! c2 4 4]
+    [@@! c2 5 1]
+    [@@! c2 6 3]
+    [@@! c2 7 5]
+    [@@! c2 8 1]
+    [@@! c2 9 2]
+    [@@! c2 10 6]
+    [@@! c2 11 0]
+    [! vm2 [vm_new c2 12]]
+    [! r2 [vm_run vm2 1000]]
+    [test_assert_eq runner r2 90 "Tier 2: ALU Arithmetic top == 90"]
+
+    ;; Tier 3 Test (Registers - 20 pts)
+    ;; Bytecode: [PUSH 777, STORE_REG 3, PUSH 23, LOAD_REG 3, ADD, HALT]
+    [! c3 [H [* 10 8]]]
+    [@@! c3 0 1]
+    [@@! c3 1 777]
+    [@@! c3 2 8]
+    [@@! c3 3 3]
+    [@@! c3 4 1]
+    [@@! c3 5 23]
+    [@@! c3 6 9]
+    [@@! c3 7 3]
+    [@@! c3 8 3]
+    [@@! c3 9 0]
+    [! vm3 [vm_new c3 10]]
+    [! r3 [vm_run vm3 1000]]
+    [test_assert_eq runner r3 800 "Tier 3: Registers top == 800"]
+
+    ;; Tier 4 Test (Control Flow Loop - 20 pts)
+    ;; Factorial of 5: R0 = 5, R1 = 1 -> R1 = 120
+    [! c4 [H [* 34 8]]]
+    [@@! c4 0 1]
+    [@@! c4 1 5]
+    [@@! c4 2 8]
+    [@@! c4 3 0]
+    [@@! c4 4 1]
+    [@@! c4 5 1]
+    [@@! c4 6 8]
+    [@@! c4 7 1]
+    [@@! c4 8 9]
+    [@@! c4 9 0]
+    [@@! c4 10 1]
+    [@@! c4 11 1]
+    [@@! c4 12 7]
+    [@@! c4 13 12]
+    [@@! c4 14 31]
+    [@@! c4 15 9]
+    [@@! c4 16 1]
+    [@@! c4 17 9]
+    [@@! c4 18 0]
+    [@@! c4 19 5]
+    [@@! c4 20 8]
+    [@@! c4 21 1]
+    [@@! c4 22 9]
+    [@@! c4 23 0]
+    [@@! c4 24 1]
+    [@@! c4 25 1]
+    [@@! c4 26 4]
+    [@@! c4 27 8]
+    [@@! c4 28 0]
+    [@@! c4 29 10]
+    [@@! c4 30 8]
+    [@@! c4 31 9]
+    [@@! c4 32 1]
+    [@@! c4 33 0]
+    [! vm4 [vm_new c4 34]]
+    [! r4 [vm_run vm4 10000]]
+    [! r1_val [@@ [@@.VM:regs vm4] 1]]
+    [test_assert_eq runner r1_val 120 "Tier 4: Loop Factorial(5) R1 == 120"]
+    [test_assert_eq runner r4 120 "Tier 4: Loop Factorial(5) top == 120"]
+
+    ;; Tier 5 Test (Subroutines CALL & RET - 20 pts)
+    ;; Push 15, call square subroutine, return 225
+    [! c5 [H [* 15 8]]]
+    [@@! c5 0 1]
+    [@@! c5 1 15]
+    [@@! c5 2 13]
+    [@@! c5 3 7]
+    [@@! c5 4 0]
+    [@@! c5 5 0]
+    [@@! c5 6 0]
+    [@@! c5 7 8]
+    [@@! c5 8 0]
+    [@@! c5 9 9]
+    [@@! c5 10 0]
+    [@@! c5 11 9]
+    [@@! c5 12 0]
+    [@@! c5 13 5]
+    [@@! c5 14 14]
+    [! vm5 [vm_new c5 15]]
+    [! r5 [vm_run vm5 1000]]
+    [test_assert_eq runner r5 225 "Tier 5: Subroutine CALL and RET == 225"]
+
+    [test_summary runner]
+    [^ 0]
+  ]
+]
+
+[run_gradient_tests]
