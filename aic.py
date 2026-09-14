@@ -92,7 +92,7 @@ def cmd_run(args):
     cmd_build(args)
 
     try:
-        cmd = [f"./{out_file}"] if sys.platform == "win32" else [f"./{out_file}"]
+        cmd = [os.path.abspath(out_file)]
         subprocess.run(cmd)
     finally:
         if os.path.exists(out_file):
