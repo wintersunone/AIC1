@@ -5364,6 +5364,20 @@ aicfn_json_get_int:
     leave
     ret
 
+aicfn_json_get_bool:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    subq    $16, %rsp
+    movq    %rdi, -8(%rbp)
+
+    movq    -8(%rbp), %rax
+    movq    8(%rax), %rax
+    jmp     .Lret_json_get_bool
+    movq    $0, %rax
+.Lret_json_get_bool:
+    leave
+    ret
+
 aicfn_json_get_str:
     pushq   %rbp
     movq    %rsp, %rbp
