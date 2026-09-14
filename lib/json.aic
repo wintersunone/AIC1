@@ -1,0 +1,314 @@
+// lib/json.aic - Fast, Pure-AIC JSON Parser & Serializer
+// Zero external dependencies. Tailored for AI agents and tool-calling protocols.
+
+[import "lib/string.aic"]
+[import "lib/vec.aic"]
+[import "lib/map.aic"]
+
+// JsonVal S-Record:
+// tag:  0 = null, 1 = bool, 2 = int, 3 = string, 4 = array, 5 = object
+// ival: integer value (for int or bool 0/1)
+// sval: string pointer (for string)
+// pval: pointer (for Vec in array, Map in object)
+[:: JsonVal tag ival sval pval]
+
+// JsonParser S-Record:
+[:: JsonParser src len pos]
+
+// --- Constructors -----------------------------------------------------------
+
+[: [$ json_null] [] [D
+  [! v [JsonVal 0 0 "" 0]]
+  [^ v]
+]]
+
+[: [$ json_bool] [b] [D
+  [! v [JsonVal 1 [? b 1 0] "" 0]]
+  [^ v]
+]]
+
+[: [$ json_int] [n] [D
+  [! v [JsonVal 2 n "" 0]]
+  [^ v]
+]]
+
+[: [$ json_str] [[$ s]] [D
+  [! v [JsonVal 3 0 s 0]]
+  [^ v]
+]]
+
+[: [$ json_arr] [] [D
+  [! vec [vec_new 8]]
+  [! v [JsonVal 4 0 "" vec]]
+  [^ v]
+]]
+
+[: [$ json_obj] [] [D
+  [! m [map_new 16]]
+  [! v [JsonVal 5 0 "" m]]
+  [^ v]
+]]
+
+// --- Accessors and Mutators -------------------------------------------------
+
+[: json_tag [[$ v]] [D
+  [^ [@@.JsonVal:tag v]]
+]]
+
+[: json_get_int [[$ v]] [D
+  [^ [@@.JsonVal:ival v]]
+]]
+
+[: [$ json_get_str] [[$ v]] [D
+  [^ [@@$.JsonVal:sval v]]
+]]
+
+[: json_arr_push [[$ arr] [$ val]] [D
+  [! vec [@@$.JsonVal:pval arr]]
+  [^ [vec_push_ptr vec val]]
+]]
+
+[: [$ json_arr_get] [[$ arr] idx] [D
+  [! vec [@@$.JsonVal:pval arr]]
+  [^ [vec_get_ptr vec idx]]
+]]
+
+[: json_arr_len [[$ arr]] [D
+  [! vec [@@$.JsonVal:pval arr]]
+  [^ [vec_len vec]]
+]]
+
+[: json_obj_set [[$ obj] [$ key] [$ val]] [D
+  [! m [@@$.JsonVal:pval obj]]
+  [^ [map_set_ptr m key val]]
+]]
+
+[: [$ json_obj_get] [[$ obj] [$ key]] [D
+  [! m [@@$.JsonVal:pval obj]]
+  [^ [map_get_ptr m key]]
+]]
+
+[: json_obj_contains [[$ obj] [$ key]] [D
+  [! m [@@$.JsonVal:pval obj]]
+  [^ [map_contains m key]]
+]]
+
+// --- Parser Internals -------------------------------------------------------
+
+[: json_skip_ws [[$ p]] [D
+  [! src [@@$.JsonParser:src p]]
+  [! len [@@.JsonParser:len p]]
+  [! pos [@@.JsonParser:pos p]]
+  [! continue 1]
+  [W [&& continue [< pos len]] [D
+    [! c [@ src pos]]
+    [? [|| [|| [== c 32] [== c 9]] [|| [== c 10] [== c 13]]]
+      [! pos [+ pos 1]]
+      [! continue 0]]
+  ]]
+  [@@!.JsonParser:pos p pos]
+  [^ 0]
+]]
+
+[: json_peek [[$ p]] [D
+  [! pos [@@.JsonParser:pos p]]
+  [! len [@@.JsonParser:len p]]
+  [? [>= pos len] [^ 0] [D]]
+  [! src [@@$.JsonParser:src p]]
+  [^ [@ src pos]]
+]]
+
+[: json_next [[$ p]] [D
+  [! pos [@@.JsonParser:pos p]]
+  [! len [@@.JsonParser:len p]]
+  [? [>= pos len] [^ 0] [D]]
+  [! src [@@$.JsonParser:src p]]
+  [! c [@ src pos]]
+  [@@!.JsonParser:pos p [+ pos 1]]
+  [^ c]
+]]
+
+[: [$ json_parse_str_raw] [[$ p]] [D
+  [! src [@@$.JsonParser:src p]]
+  [! len [@@.JsonParser:len p]]
+  [! q [json_next p]] // consume opening quote '"'
+  [! pos [@@.JsonParser:pos p]]
+  [! max_len [- len pos]]
+  [! buf [H [+ max_len 1]]]
+  [! out_i 0]
+  [! closed 0]
+  [W [&& [== closed 0] [< [@@.JsonParser:pos p] len]] [D
+    [! c [json_next p]]
+    [? [== c 34] [D
+      [! closed 1]
+    ] [? [== c 92] [D
+      // escape character
+      [! esc [json_next p]]
+      [! ch esc]
+      [? [== esc 110] [! ch 10] [D]] // \n
+      [? [== esc 116] [! ch 9] [D]]  // \t
+      [? [== esc 114] [! ch 13] [D]] // \r
+      [@! buf out_i ch]
+      [! out_i [+ out_i 1]]
+    ] [D
+      [@! buf out_i c]
+      [! out_i [+ out_i 1]]
+    ]]]
+  ]]
+  [@! buf out_i 0]
+  [! res [/ buf 0 out_i]]
+  [^ res]
+]]
+
+[: [$ json_parse_num] [[$ p]] [D
+  [! sign 1]
+  [! c [json_peek p]]
+  [? [== c 45] [D
+    [! sign -1]
+    [json_next p]
+  ] [D]]
+  [! val 0]
+  [! loop 1]
+  [W loop [D
+    [! ch [json_peek p]]
+    [? [&& [>= ch 48] [<= ch 57]] [D
+      [json_next p]
+      [! val [+ [* val 10] [- ch 48]]]
+    ] [D
+      [! loop 0]
+    ]]
+  ]]
+  [! total [* val sign]]
+  [^ [json_int total]]
+]]
+
+[: [$ json_parse_bool_or_null] [[$ p]] [D
+  [! c [json_peek p]]
+  [? [== c 116] [D // 't' -> true
+    [json_next p] [json_next p] [json_next p] [json_next p]
+    [^ [json_bool 1]]
+  ] [D]]
+  [? [== c 102] [D // 'f' -> false
+    [json_next p] [json_next p] [json_next p] [json_next p] [json_next p]
+    [^ [json_bool 0]]
+  ] [D]]
+  // 'n' -> null
+  [json_next p] [json_next p] [json_next p] [json_next p]
+  [^ [json_null]]
+]]
+
+[: [$ json_parse_arr] [[$ p]] [D
+  [json_next p] // consume '['
+  [! arr [json_arr]]
+  [json_skip_ws p]
+  [! c [json_peek p]]
+  [? [== c 93] [D
+    [json_next p] // consume ']'
+    [^ arr]
+  ] [D]]
+  [! loop 1]
+  [W loop [D
+    [! elem [json_parse_val p]]
+    [json_arr_push arr elem]
+    [json_skip_ws p]
+    [! nc [json_next p]]
+    [? [== nc 44] [D] [? [== nc 93] [! loop 0] [! loop 0]]]
+  ]]
+  [^ arr]
+]]
+
+[: [$ json_parse_obj] [[$ p]] [D
+  [json_next p] // consume '{'
+  [! obj [json_obj]]
+  [json_skip_ws p]
+  [! c [json_peek p]]
+  [? [== c 125] [D
+    [json_next p] // consume '}'
+    [^ obj]
+  ] [D]]
+  [! loop 1]
+  [W loop [D
+    [json_skip_ws p]
+    [! key [json_parse_str_raw p]]
+    [json_skip_ws p]
+    [! col [json_next p]] // consume ':'
+    [json_skip_ws p]
+    [! val [json_parse_val p]]
+    [json_obj_set obj key val]
+    [json_skip_ws p]
+    [! nc [json_next p]]
+    [? [== nc 44] [D] [? [== nc 125] [! loop 0] [! loop 0]]]
+  ]]
+  [^ obj]
+]]
+
+[: [$ json_parse_val] [[$ p]] [D
+  [json_skip_ws p]
+  [! c [json_peek p]]
+  [? [== c 34] [D
+    [! s [json_parse_str_raw p]]
+    [^ [json_str s]]
+  ] [D]]
+  [? [== c 123] [^ [json_parse_obj p]] [D]]
+  [? [== c 91] [^ [json_parse_arr p]] [D]]
+  [? [|| [== c 116] [|| [== c 102] [== c 110]]] [^ [json_parse_bool_or_null p]] [D]]
+  [^ [json_parse_num p]]
+]]
+
+[: [$ json_parse] [[$ src]] [D
+  [! len [L src]]
+  [! p [JsonParser src len 0]]
+  [^ [json_parse_val p]]
+]]
+
+// --- Serializer -------------------------------------------------------------
+
+[: [$ json_stringify] [[$ v]] [D
+  [! tag [@@.JsonVal:tag v]]
+  [? [== tag 0] [^ "null"] [D]]
+  [? [== tag 1] [^ [? [@@.JsonVal:ival v] "true" "false"]] [D]]
+  [? [== tag 2] [^ [N [@@.JsonVal:ival v]]] [D]]
+  [? [== tag 3] [D
+    [! s [@@$.JsonVal:sval v]]
+    [! q [str_quote]]
+    [! q1 [str_cat q s]]
+    [! q2 [str_cat q1 q]]
+    [^ q2]
+  ] [D]]
+  [? [== tag 4] [D
+    [! a [@@$.JsonVal:pval v]]
+    [! n [vec_len a]]
+    [! out "["]
+    [@> n [i] [D
+      [! elem [vec_get_ptr a i]]
+      [! s_elem [json_stringify elem]]
+      [! out [str_cat out s_elem]]
+      [? [< i [- n 1]] [! out [str_cat out ", "]] [D]]
+    ]]
+    [! out [str_cat out "]"]]
+    [^ out]
+  ] [D]]
+  [? [== tag 5] [D
+    [! m [@@$.JsonVal:pval v]]
+    [! cap [@@.Map:cap m]]
+    [! kbuf [@@$.Map:keys m]]
+    [! vbuf [@@$.Map:values m]]
+    [! out "{"]
+    [! first 1]
+    [@> cap [i] [D
+      [! k [@@$ kbuf i]]
+      [? [!= k 0] [D
+        [! val [@@$ vbuf i]]
+        [? [== first 0] [! out [str_cat out ", "]] [! first 0]]
+        [! q [str_quote]]
+        [! k_col [str_cat k [str_cat q ": "]]]
+        [! qk [str_cat q k_col]]
+        [! sv [json_stringify val]]
+        [! out [str_cat out [str_cat qk sv]]]
+      ] [D]]
+    ]]
+    [! out [str_cat out "}"]]
+    [^ out]
+  ] [D]]
+  [^ "null"]
+]]

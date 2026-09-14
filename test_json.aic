@@ -1,0 +1,69 @@
+// test_json.aic - Comprehensive Test for Pure-AIC JSON Library
+
+[import "lib/json.aic"]
+[import "lib/test.aic"]
+
+[! runner [test_runner_init]]
+
+// Helper to wrap a string with quotes for JSON parsing
+[: [$ json_wrap_str] [[$ s]] [D
+  [! q [str_quote]]
+  [^ [str_cat q [str_cat s q]]]
+]]
+
+// 1. Primitive tests
+[! j_num [json_parse "12345"]]
+[test_assert_eq runner [json_tag j_num] 2 "json_parse '12345' tag is INT"]
+[test_assert_eq runner [json_get_int j_num] 12345 "json_parse '12345' value is 12345"]
+[test_assert_str_eq runner [json_stringify j_num] "12345" "json_stringify int matches"]
+
+[! j_neg [json_parse "-999"]]
+[test_assert_eq runner [json_get_int j_neg] -999 "json_parse '-999' value is -999"]
+
+[! j_true [json_parse "true"]]
+[test_assert_eq runner [json_tag j_true] 1 "json_parse 'true' tag is BOOL"]
+[test_assert_eq runner [json_get_int j_true] 1 "json_parse 'true' value is 1"]
+
+[! j_false [json_parse "false"]]
+[test_assert_eq runner [json_get_int j_false] 0 "json_parse 'false' value is 0"]
+
+[! j_null [json_parse "null"]]
+[test_assert_eq runner [json_tag j_null] 0 "json_parse 'null' tag is NULL"]
+
+[! j_str [json_parse [json_wrap_str "Hello AI!"]]]
+[test_assert_eq runner [json_tag j_str] 3 "json_parse string tag is STR"]
+[test_assert_str_eq runner [json_get_str j_str] "Hello AI!" "json_parse string value"]
+
+// 2. Array tests
+[! j_arr [json_parse "[10, 20, 30, 40]"]]
+[test_assert_eq runner [json_tag j_arr] 4 "json_parse array tag is ARR"]
+[test_assert_eq runner [json_arr_len j_arr] 4 "json_parse array length is 4"]
+[! e0 [json_arr_get j_arr 0]]
+[! e2 [json_arr_get j_arr 2]]
+[test_assert_eq runner [json_get_int e0] 10 "array elem 0 is 10"]
+[test_assert_eq runner [json_get_int e2] 30 "array elem 2 is 30"]
+
+// 3. Object tests (construction, serialization, parsing, verification)
+[! obj_orig [json_obj]]
+[json_obj_set obj_orig "compiler" [json_str "AIC"]]
+[json_obj_set obj_orig "stage" [json_int 15]]
+[json_obj_set obj_orig "self_hosted" [json_bool 1]]
+
+[! json_text [json_stringify obj_orig]]
+[! j_obj [json_parse json_text]]
+[test_assert_eq runner [json_tag j_obj] 5 "json_parse object tag is OBJ"]
+[test_assert_true runner [json_obj_contains j_obj "compiler"] "obj contains 'compiler'"]
+[test_assert_true runner [json_obj_contains j_obj "stage"] "obj contains 'stage'"]
+
+[! val_compiler [json_obj_get j_obj "compiler"]]
+[test_assert_str_eq runner [json_get_str val_compiler] "AIC" "compiler field is 'AIC'"]
+
+[! val_stage [json_obj_get j_obj "stage"]]
+[test_assert_eq runner [json_get_int val_stage] 15 "stage field is 15"]
+
+// 4. Roundtrip serialization test
+[! out_arr_str [json_stringify j_arr]]
+[! j_arr_reparsed [json_parse out_arr_str]]
+[test_assert_eq runner [json_arr_len j_arr_reparsed] 4 "reparsed array length matches"]
+
+[test_summary runner]

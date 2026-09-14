@@ -1,6 +1,7 @@
 // lib/map.aic - Dynamic Hash Map (String -> Word/Pointer) for AIC
 
 [import "lib/string.aic"]
+[import "lib/vec.aic"]
 
 [:: Map keys values cap len]
 
@@ -128,3 +129,114 @@
   ]]
   [^ 1]
 ]]
+
+[: [$ map_keys] [[$ m]] [D
+  [! n [@@.Map:len m]]
+  [! cap [@@.Map:cap m]]
+  [! kbuf [@@$.Map:keys m]]
+  [! v [vec_new n]]
+  [@> cap [i] [D
+    [! k [@@$ kbuf i]]
+    [? [!= k 0] [D
+      [vec_push v k]
+    ] [D]]
+  ]]
+  [^ v]
+]]
+
+[: [$ map_values] [[$ m]] [D
+  [! n [@@.Map:len m]]
+  [! cap [@@.Map:cap m]]
+  [! kbuf [@@$.Map:keys m]]
+  [! vbuf [@@$.Map:values m]]
+  [! v [vec_new n]]
+  [@> cap [i] [D
+    [! k [@@$ kbuf i]]
+    [? [!= k 0] [D
+      [vec_push v [@@ vbuf i]]
+    ] [D]]
+  ]]
+  [^ v]
+]]
+
+[: [$ map_get_ptr] [[$ m] [$ key]] [D
+  [! cap [@@.Map:cap m]]
+  [! mask [- cap 1]]
+  [! h [hash_str key]]
+  [! idx [& h mask]]
+  [! kbuf [@@$.Map:keys m]]
+  [! vbuf [@@$.Map:values m]]
+  [! steps 0]
+  [! res 0]
+  [! found 0]
+  [W [&& [== found 0] [< steps cap]] [D
+    [! k [@@$ kbuf idx]]
+    [? [== k 0] [! found -1] [D
+      [? [str_eq k key] [D
+        [! res [@@$ vbuf idx]]
+        [! found 1]
+      ] [D
+        [! idx [& [+ idx 1] mask]]
+        [! steps [+ steps 1]]
+      ]]
+    ]]
+  ]]
+  [? [== found 1] [^ res] [^ ""]]
+]]
+
+[: map_set_ptr [[$ m] [$ key] [$ val]] [D
+  [! n [@@.Map:len m]]
+  [! cap [@@.Map:cap m]]
+  [! mask [- cap 1]]
+  [! kbuf [@@$.Map:keys m]]
+  [! vbuf [@@$.Map:values m]]
+
+  [? [>= [* n 2] cap] [D
+    [! new_cap [* cap 2]]
+    [! new_mask [- new_cap 1]]
+    [! new_kbuf [H [* new_cap 8]]]
+    [! new_vbuf [H [* new_cap 8]]]
+    [@> cap [i] [D
+      [! old_k [@@$ kbuf i]]
+      [? [!= old_k 0] [D
+        [! old_v [@@$ vbuf i]]
+        [! h [hash_str old_k]]
+        [! n_idx [& h new_mask]]
+        [W [!= [@@$ new_kbuf n_idx] 0] [D
+          [! n_idx [& [+ n_idx 1] new_mask]]
+        ]]
+        [@@$! new_kbuf n_idx old_k]
+        [@@$! new_vbuf n_idx old_v]
+      ] [D]]
+    ]]
+    [@@$!.Map:keys m new_kbuf]
+    [@@$!.Map:values m new_vbuf]
+    [@@!.Map:cap m new_cap]
+    [! cap new_cap]
+    [! mask new_mask]
+    [! kbuf new_kbuf]
+    [! vbuf new_vbuf]
+  ] [D]]
+
+  [! h [hash_str key]]
+  [! idx [& h mask]]
+  [! placed 0]
+  [W [== placed 0] [D
+    [! k [@@$ kbuf idx]]
+    [? [== k 0] [D
+      [@@$! kbuf idx key]
+      [@@$! vbuf idx val]
+      [@@!.Map:len m [+ n 1]]
+      [! placed 1]
+    ] [D
+      [? [str_eq k key] [D
+        [@@$! vbuf idx val]
+        [! placed 1]
+      ] [D
+        [! idx [& [+ idx 1] mask]]
+      ]]
+    ]]
+  ]]
+  [^ 1]
+]]
+

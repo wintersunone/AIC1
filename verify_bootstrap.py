@@ -214,8 +214,62 @@ def main():
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     print(f"    >>> STDLIB LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
+    # 16. Pure-AIC JSON Parser & Serializer Verification
+    run(["./aic.exe", "test_json.aic", "test_json_pipeline.s"],
+        "Stage 16a: Native aic.exe compiles test_json.aic -> test_json_pipeline.s")
+
+    run([sys.executable, "tools/aic_pe_emitter.py", "test_json_pipeline.s", "-o", "test_json_pipeline.exe"],
+        "Stage 16b: Package test_json_pipeline.exe (Direct PE emitter)")
+
+    p_json = run(["./test_json_pipeline.exe"],
+                 "Stage 16c: Execute native test_json binary")
+    out_json = p_json.stdout.replace("\r\n", "\n")
+    if "(ALL PASSED)" not in out_json:
+        print("[FAIL] test_json execution failed! Output:")
+        print(out_json)
+        sys.exit(1)
+    print("    >>> PURE-AIC JSON PARSER & SERIALIZER (20/20 TESTS) VERIFIED CLEAN <<<")
+
+    run([sys.executable, "tools/aic_elf_emitter.py", "test_json_pipeline.s", "-o", "test_json_pipeline.elf"],
+        "Stage 16d: Generate standalone Linux ELF64 binary test_json_pipeline.elf")
+
+    with open("test_json_pipeline.elf", "rb") as f_jelf:
+        elf_bytes = f_jelf.read()
+    assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
+    print(f"    >>> JSON LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
+
+    # 17. System Architecture, Arena Allocator & File I/O Verification
+    run(["./aic.exe", "test_system.aic", "test_system_pipeline.s"],
+        "Stage 17a: Native aic.exe compiles test_system.aic -> test_system_pipeline.s")
+
+    run([sys.executable, "tools/aic_pe_emitter.py", "test_system_pipeline.s", "-o", "test_system_pipeline.exe"],
+        "Stage 17b: Package test_system_pipeline.exe (Direct PE emitter)")
+
+    p_sys = run(["./test_system_pipeline.exe"],
+                "Stage 17c: Execute native test_system binary")
+    out_sys = p_sys.stdout.replace("\r\n", "\n")
+    if "(ALL PASSED)" not in out_sys:
+        print("[FAIL] test_system execution failed! Output:")
+        print(out_sys)
+        sys.exit(1)
+    print("    >>> ARENA ALLOCATOR & FILE I/O (14/14 TESTS) VERIFIED CLEAN <<<")
+
+    run([sys.executable, "tools/aic_elf_emitter.py", "test_system_pipeline.s", "-o", "test_system_pipeline.elf"],
+        "Stage 17d: Generate standalone Linux ELF64 binary test_system_pipeline.elf")
+
+    with open("test_system_pipeline.elf", "rb") as f_self:
+        elf_bytes = f_self.read()
+    assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
+    print(f"    >>> SYSTEM LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
+
+    # Cleanup temporary test files
+    for tmp in ["build_test_io.tmp"]:
+        if os.path.exists(tmp):
+            try: os.remove(tmp)
+            except: pass
+
     print("\n" + "=" * 70)
-    print("ALL 15 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
+    print("ALL 17 STAGES PASSED. SELF-HOSTING & CROSS-PLATFORM TOOLCHAIN FREEDOM PROVEN.")
     print(f"Compiler binary: aic.exe ({os.path.getsize('aic.exe'):,} bytes)")
     print("Zero external toolchain dependency (Windows PE & Linux ELF direct emitters).")
     print("=" * 70)
@@ -223,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

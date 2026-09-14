@@ -1,0 +1,43 @@
+// lib/io.aic - Standard I/O and File System Operations for AIC
+
+[: [$ io_read_file] [[$ path]] [D
+  [! fh [O path "r"]]
+  [? [== fh 0] [^ ""] [D]]
+  [! sz [Z fh]]
+  [! content [? [> sz 0] [R fh sz] ""]]
+  [X fh]
+  [^ content]
+]]
+
+[: io_write_file [[$ path] [$ content]] [D
+  [! fh [O path "w"]]
+  [? [== fh 0] [^ 0] [D]]
+  [! len [L content]]
+  [? [> len 0] [K fh content] [D]]
+  [X fh]
+  [^ 1]
+]]
+
+[: io_append_file [[$ path] [$ content]] [D
+  [! fh [O path "a"]]
+  [? [== fh 0] [^ 0] [D]]
+  [! len [L content]]
+  [? [> len 0] [K fh content] [D]]
+  [X fh]
+  [^ 1]
+]]
+
+[: io_file_size [[$ path]] [D
+  [! fh [O path "r"]]
+  [? [== fh 0] [^ -1] [D]]
+  [! sz [Z fh]]
+  [X fh]
+  [^ sz]
+]]
+
+[: io_file_exists [[$ path]] [D
+  [! fh [O path "r"]]
+  [? [== fh 0] [^ 0] [D]]
+  [X fh]
+  [^ 1]
+]]

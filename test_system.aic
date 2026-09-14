@@ -1,0 +1,51 @@
+// test_system.aic - Comprehensive Test for Arena & File I/O Modules
+
+[import "lib/arena.aic"]
+[import "lib/io.aic"]
+[import "lib/test.aic"]
+
+[! runner [test_runner_init]]
+
+// 1. Arena Allocator Tests
+[! a [arena_new 4096]]
+[test_assert_eq runner [arena_offset a] 0 "new arena offset is 0"]
+[test_assert_eq runner [arena_cap a] 4096 "new arena cap is 4096"]
+
+[! w_off [arena_alloc_words a 16]]
+[test_assert_eq runner w_off 0 "first word alloc is at offset 0"]
+[test_assert_eq runner [arena_used a] 128 "arena used 128 bytes (16 * 8)"]
+
+[! abuf [arena_buffer a]]
+[@@! abuf 0 1234567]
+[@@! abuf 1 7654321]
+[test_assert_eq runner [@@ abuf 0] 1234567 "arena word 0 stored correctly"]
+[test_assert_eq runner [@@ abuf 1] 7654321 "arena word 1 stored correctly"]
+
+[! w_off2 [arena_alloc_words a 8]]
+[test_assert_eq runner w_off2 16 "second word alloc is at offset 16"]
+[test_assert_eq runner [arena_used a] 192 "arena used 192 bytes (24 * 8)"]
+
+[arena_reset a]
+[test_assert_eq runner [arena_offset a] 0 "arena reset sets offset back to 0"]
+
+// 2. File I/O Tests
+[! test_file "build_test_io.tmp"]
+[! payload "AIC Native File I/O Verification\n"]
+
+[! wr_ok [io_write_file test_file payload]]
+[test_assert_eq runner wr_ok 1 "io_write_file succeeds"]
+[! f_exists [io_file_exists test_file]]
+[test_assert_eq runner f_exists 1 "io_file_exists confirms file exists"]
+
+[! read_back [io_read_file test_file]]
+[test_assert_str_eq runner read_back payload "io_read_file content matches payload"]
+
+[! append_payload "Line 2 Appended Data\n"]
+[! app_ok [io_append_file test_file append_payload]]
+[test_assert_eq runner app_ok 1 "io_append_file succeeds"]
+
+[! expected_full [str_cat payload append_payload]]
+[! full_read [io_read_file test_file]]
+[test_assert_str_eq runner full_read expected_full "appended content matches full read"]
+
+[test_summary runner]

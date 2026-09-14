@@ -1,0 +1,55 @@
+// lib/test.aic - Autonomous Unit Testing Framework for AIC
+
+[import "lib/string.aic"]
+
+[:: TestStats total passed failed]
+
+[: [$ test_runner_init] [] [D
+  [! s [TestStats 0 0 0]]
+  [^ s]
+]]
+
+[: test_assert_eq [[$ s] actual expected [$ msg]] [D
+  [@@!.TestStats:total s [+ [@@.TestStats:total s] 1]]
+  [? [== actual expected] [D
+    [@@!.TestStats:passed s [+ [@@.TestStats:passed s] 1]]
+    [. "  [PASS] "] [. msg] [. "\n"]
+    [^ 1]
+  ] [D
+    [@@!.TestStats:failed s [+ [@@.TestStats:failed s] 1]]
+    [. "  [FAIL] "] [. msg] [. " (expected "] [. expected] [. ", got "] [. actual] [. ")\n"]
+    [^ 0]
+  ]]
+]]
+
+[: test_assert_str_eq [[$ s] [$ actual] [$ expected] [$ msg]] [D
+  [@@!.TestStats:total s [+ [@@.TestStats:total s] 1]]
+  [? [str_eq actual expected] [D
+    [@@!.TestStats:passed s [+ [@@.TestStats:passed s] 1]]
+    [. "  [PASS] "] [. msg] [. "\n"]
+    [^ 1]
+  ] [D
+    [@@!.TestStats:failed s [+ [@@.TestStats:failed s] 1]]
+    [. "  [FAIL] "] [. msg] [. " (expected '"] [. expected] [. "', got '"] [. actual] [. "')\n"]
+    [^ 0]
+  ]]
+]]
+
+[: test_assert_true [[$ s] cond [$ msg]] [D
+  [^ [test_assert_eq s [? cond 1 0] 1 msg]]
+]]
+
+[: test_summary [[$ s]] [D
+  [! tot [@@.TestStats:total s]]
+  [! pas [@@.TestStats:passed s]]
+  [! fai [@@.TestStats:failed s]]
+  [. "==================================================\n"]
+  [. "Test Results: "] [. pas] [. "/"] [. tot] [. " passed"]
+  [? [> fai 0] [D
+    [. " ("] [. fai] [. " FAILED)\n"]
+  ] [D
+    [. " (ALL PASSED)\n"]
+  ]]
+  [. "==================================================\n"]
+  [^ [? [== fai 0] 0 1]]
+]]

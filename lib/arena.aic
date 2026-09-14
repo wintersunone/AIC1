@@ -1,0 +1,51 @@
+// lib/arena.aic - Linear Memory Arena Allocator for AIC
+
+[:: Arena buf offset cap]
+
+[: [$ arena_new] [capacity] [D
+  [! c [? [<= capacity 0] 65536 capacity]]
+  [! b [H c]]
+  [! a [Arena b 0 c]]
+  [^ a]
+]]
+
+[: [$ arena_buffer] [[$ a]] [D
+  [^ [@@$.Arena:buf a]]
+]]
+
+[: arena_offset [[$ a]] [D
+  [^ [@@.Arena:offset a]]
+]]
+
+[: arena_cap [[$ a]] [D
+  [^ [@@.Arena:cap a]]
+]]
+
+[: arena_alloc [[$ a] bytes] [D
+  [! off [@@.Arena:offset a]]
+  [! cap [@@.Arena:cap a]]
+  [! aligned [& [+ bytes 7] -8]]
+  [! next_off [+ off aligned]]
+  [? [> next_off cap] [^ -1] [D]]
+  [@@!.Arena:offset a next_off]
+  [^ off]
+]]
+
+[: arena_alloc_words [[$ a] count] [D
+  [! byte_off [arena_alloc a [* count 8]]]
+  [? [< byte_off 0] [^ -1] [D]]
+  [^ [/ byte_off 8]]
+]]
+
+[: arena_reset [[$ a]] [D
+  [@@!.Arena:offset a 0]
+  [^ 0]
+]]
+
+[: arena_used [[$ a]] [D
+  [^ [@@.Arena:offset a]]
+]]
+
+[: arena_remaining [[$ a]] [D
+  [^ [- [@@.Arena:cap a] [@@.Arena:offset a]]]
+]]

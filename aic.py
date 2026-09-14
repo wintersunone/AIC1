@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""
+aic.py - Unified Toolchain CLI for the AIC (AI Compiler / AI C) Language
+
+Provides a single unified command-line interface to compile, link, execute,
+test, and verify AIC programs across Windows (PE32+) and Linux (ELF64).
+"""
+
+import sys
+import os
+import argparse
+import subprocess
+from compiler import read_source_with_imports, eval_node, tokenize, parse, Scope, OPS
+
+def cmd_build(args):
+    src_file = args.input
+    if not os.path.exists(src_file):
+        print(f"[ERR] Source file '{src_file}' not found.")
+        sys.exit(1)
+
+    target = args.target
+    if target == "auto":
+        target = "pe" if sys.platform == "win32" else "elf"
+
+    out_file = args.output
+    if not out_file:
+        base = os.path.splitext(src_file)[0]
+        out_file = f"{base}.exe" if target == "pe" else f"{base}.elf"
+
+    asm_file = f"{os.path.splitext(src_file)[0]}.s"
+
+    # 1. Compile to assembly using native aic.exe if available, else python codegen
+    aic_exe = "./aic.exe" if os.path.exists("aic.exe") else None
+    if aic_exe and not args.force_python:
+        res = subprocess.run([aic_exe, src_file, asm_file], capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[ERR] Native compilation failed:\n{res.stderr or res.stdout}")
+            sys.exit(res.returncode)
+    else:
+        from aic_codegen import compile_file
+        try:
+            compile_file(src_file, asm_file)
+        except Exception as e:
+            print(f"[ERR] Host compilation failed: {e}")
+            sys.exit(1)
+
+    # 2. Package directly using zero-dependency emitters
+    if target == "pe":
+        import tools.aic_pe_emitter as pe_emitter
+        with open(asm_file, "r", encoding="utf-8") as f:
+            asm_content = f.read()
+        pe_emitter.build_standalone_pe(asm_content, out_file)
+        print(f"[OK] Standalone PE32+ executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
+    elif target == "elf":
+        import tools.aic_elf_emitter as elf_emitter
+        with open(asm_file, "r", encoding="utf-8") as f:
+            asm_content = f.read()
+        elf_emitter.build_standalone_elf(asm_content, out_file)
+        print(f"[OK] Standalone Linux ELF64 executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
+    else:
+        print(f"[ERR] Unknown target '{target}'")
+        sys.exit(1)
+
+    if not args.keep_asm and os.path.exists(asm_file):
+        try: os.remove(asm_file)
+        except: pass
+
+def cmd_run(args):
+    src_file = args.input
+    if not os.path.exists(src_file):
+        print(f"[ERR] Source file '{src_file}' not found.")
+        sys.exit(1)
+
+    if args.interp:
+        import compiler
+        src = read_source_with_imports(src_file)
+        tokens, lines = tokenize(src)
+        ast = parse(tokens, lines)
+        env = Scope()
+        env.table["__name__"] = "__main__"
+        for node in ast:
+            eval_node(node, env)
+        return
+
+    # Native compile & run
+    base = os.path.splitext(src_file)[0]
+    out_file = f"{base}_run.exe" if sys.platform == "win32" else f"{base}_run.elf"
+    args.output = out_file
+    args.target = "auto"
+    args.force_python = False
+    args.keep_asm = False
+    cmd_build(args)
+
+    try:
+        cmd = [f"./{out_file}"] if sys.platform == "win32" else [f"./{out_file}"]
+        subprocess.run(cmd)
+    finally:
+        if os.path.exists(out_file):
+            try: os.remove(out_file)
+            except: pass
+
+def cmd_test(args):
+    suites = [
+        "test_stdlib.aic",
+        "test_json.aic",
+        "test_system.aic",
+    ]
+    all_passed = True
+    print("=" * 60)
+    print("AIC Standard Test Suite")
+    print("=" * 60)
+    for suite in suites:
+        print(f"\n[*] Running suite: {suite}")
+        cmd_args = argparse.Namespace(
+            input=suite,
+            output=None,
+            target="auto",
+            force_python=False,
+            keep_asm=False,
+            interp=False
+        )
+        try:
+            cmd_run(cmd_args)
+        except Exception as e:
+            print(f"[FAIL] Error in {suite}: {e}")
+            all_passed = False
+
+    if all_passed:
+        print("\n" + "=" * 60)
+        print("ALL TEST SUITES PASSED CLEANLY.")
+        print("=" * 60)
+    else:
+        sys.exit(1)
+
+def cmd_verify(args):
+    import verify_bootstrap
+    verify_bootstrap.main()
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="AIC (AI Compiler / AI C) - Systems Language Engineered for Artificial Intelligence",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # build
+    p_build = subparsers.add_parser("build", help="Compile an .aic program to a standalone native binary")
+    p_build.add_argument("input", help="Input .aic file")
+    p_build.add_argument("-o", "--output", help="Output binary file path")
+    p_build.add_argument("--target", choices=["auto", "pe", "elf"], default="auto",
+                         help="Target binary format: pe (Windows), elf (Linux), or auto (default)")
+    p_build.add_argument("--keep-asm", action="store_true", help="Keep intermediate .s file")
+    p_build.add_argument("--force-python", action="store_true", help="Force Python compiler instead of native aic.exe")
+    p_build.set_defaults(func=cmd_build)
+
+    # run
+    p_run = subparsers.add_parser("run", help="Compile and run an .aic program natively")
+    p_run.add_argument("input", help="Input .aic file")
+    p_run.add_argument("--interp", action="store_true", help="Run via reference interpreter instead of native binary")
+    p_run.set_defaults(func=cmd_run)
+
+    # test
+    p_test = subparsers.add_parser("test", help="Run the full standard library and integration test suites")
+    p_test.set_defaults(func=cmd_test)
+
+    # verify
+    p_verify = subparsers.add_parser("verify", help="Run the full 17-stage self-hosting bootstrap verification pipeline")
+    p_verify.set_defaults(func=cmd_verify)
+
+    args = parser.parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()

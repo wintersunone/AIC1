@@ -729,7 +729,9 @@ class Analyzer:
                 )
             t1 = self.check_reads(node[1], declared, types, ctx_name, allow_return)
             t2 = self.check_reads(node[2], declared, types, ctx_name, allow_return)
-            if t1 != INT or t2 != INT:
+            if op in ("==", "!="):
+                pass
+            elif t1 != INT or t2 != INT:
                 raise CodegenError(
                     f"Line {_line_of(node[0])}: '{op}' needs numbers on "
                     f"both sides - string operands aren't supported by "
