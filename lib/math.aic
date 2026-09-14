@@ -44,7 +44,7 @@
 [: math_lcm [a b] [D
   [? [|| [== a 0] [== b 0]] [^ 0] [D]]
   [! g [math_gcd a b]]
-  [^ [/ [* [math_abs a] [math_abs b]] g]]
+  [^ [* [/ [math_abs a] g] [math_abs b]]]
 ]]
 
 [: math_sqrt [n] [D

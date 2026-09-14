@@ -817,6 +817,7 @@ class Codegen:
             elif ch == '"': out.append('\\"')
             elif ch == "\n": out.append("\\n")
             elif ch == "\t": out.append("\\t")
+            elif ch == "\r": out.append("\\r")
             else: out.append(ch)
         return "".join(out)
 
@@ -1286,12 +1287,6 @@ class Codegen:
             mode_label = self.string_label({"r": "rb", "w": "wb", "a": "ab"}[node[2].val])
             self.emit(f"    leaq    {mode_label}(%rip), %rsi")
             self.emit("    call    aic_fopen")
-            ok = self.new_label("openok")
-            self.emit("    testq   %rax, %rax")
-            self.emit(f"    jne     {ok}")
-            self.emit("    jmp     .Lruntimeerror")
-            self.emit(f"{ok}:")
-            self.needs_runtime_guard = True
 
         elif op == "Z":
             self.compile_expr(node[1])                        # %rax = FILE*

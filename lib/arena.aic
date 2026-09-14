@@ -22,6 +22,7 @@
 ]]
 
 [: arena_alloc [[$ a] bytes] [D
+  [? [<= bytes 0] [^ -1] [D]]
   [! off [@@.Arena:offset a]]
   [! cap [@@.Arena:cap a]]
   [! aligned [& [+ bytes 7] -8]]

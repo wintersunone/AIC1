@@ -178,7 +178,7 @@ class Assembler:
                 elif directive == '.data':
                     self.current_section = '.data'
                 elif directive == '.string':
-                    m = re.match(r'^"([^"]*)"', arg)
+                    m = re.match(r'^"((?:[^"\\]|\\.)*)"', arg)
                     s_bytes = unescape_gas_string(m.group(1)) + b'\0' if m else b'\0'
                     self.sections[self.current_section].extend(s_bytes)
                 elif directive == '.quad':
@@ -521,7 +521,11 @@ _pe_entry:
     cmpb    $0, %al
     je      .Lparse_done
     cmpb    $32, %al
-    jne     .Lfound_arg
+    je      .Lskip_inc
+    cmpb    $9, %al
+    je      .Lskip_inc
+    jmp     .Lfound_arg
+.Lskip_inc:
     incq    %rsi
     jmp     .Lskip_spaces
 
@@ -536,6 +540,8 @@ _pe_entry:
     cmpb    $0, %al
     je      .Lparse_done
     cmpb    $32, %al
+    je      .Lterm_arg
+    cmpb    $9, %al
     je      .Lterm_arg
     incq    %rsi
     jmp     .Lscan_normal

@@ -1,0 +1,81 @@
+// test_edge_cases.aic - Edge-Case & Robustness Regression Test Suite
+// Verifies fixes for escaped quotes, file existence, integer conversions,
+// hash map non-power-of-2 capacities, and math LCM overflow protection.
+
+[import "lib/test.aic"]
+[import "lib/string.aic"]
+[import "lib/math.aic"]
+[import "lib/vec.aic"]
+[import "lib/map.aic"]
+[import "lib/io.aic"]
+[import "lib/arena.aic"]
+
+[: main []
+  [D
+    [! runner [test_runner_init]]
+
+    // 1. File I/O graceful failure
+    [! missing_exists [io_file_exists "definitely_nonexistent_file_xyz123.txt"]]
+    [test_assert_eq runner missing_exists 0 "io_file_exists returns 0 on missing file"]
+
+    [! missing_content [io_read_file "definitely_nonexistent_file_xyz123.txt"]]
+    [! content_len [L missing_content]]
+    [test_assert_eq runner content_len 0 "io_read_file returns empty string on missing file"]
+
+    // 2. String literal with escaped quotes and backslashes
+    [! s_quote "Hello \"AIC\" World!"]
+    [! s_quote_len [L s_quote]]
+    [test_assert_eq runner s_quote_len 18 "Escaped quotes preserved in string literal"]
+    [! ch_q1 [@ s_quote 6]]
+    [! ch_q2 [@ s_quote 10]]
+    [test_assert_eq runner ch_q1 34 "First internal quote is ASCII 34"]
+    [test_assert_eq runner ch_q2 34 "Second internal quote is ASCII 34"]
+
+    [! s_slash "Path\\To\\File"]
+    [! s_slash_len [L s_slash]]
+    [test_assert_eq runner s_slash_len 12 "Escaped backslashes preserved"]
+
+    // 3. String to Integer conversion with +, -, and unsigned
+    [! v_pos [V "+42"]]
+    [! v_neg [V "-42"]]
+    [! v_raw [V "42"]]
+    [test_assert_eq runner v_pos 42 "String conversion with leading + succeeds"]
+    [test_assert_eq runner v_neg -42 "String conversion with leading - succeeds"]
+    [test_assert_eq runner v_raw 42 "String conversion with unsigned digits succeeds"]
+
+    // 4. Map with non-power-of-2 capacity
+    [! m [map_new 10]]
+    [map_set m "apple" 100]
+    [map_set m "banana" 200]
+    [map_set m "cherry" 300]
+    [map_set m "date" 400]
+    [map_set m "elderberry" 500]
+    [test_assert_eq runner [map_len m] 5 "Map with initial_cap 10 stores 5 items"]
+    [test_assert_eq runner [map_get m "apple"] 100 "Map gets apple = 100"]
+    [test_assert_eq runner [map_get m "banana"] 200 "Map gets banana = 200"]
+    [test_assert_eq runner [map_get m "elderberry"] 500 "Map gets elderberry = 500"]
+    [test_assert_eq runner [map_contains m "cherry"] 1 "Map contains cherry"]
+    [test_assert_eq runner [map_contains m "fig"] 0 "Map does not contain fig"]
+
+    // 5. Math LCM overflow protection with large numbers
+    [! lcm_val [math_lcm 1000000 2000000]]
+    [test_assert_eq runner lcm_val 2000000 "math_lcm with 10^6 and 2*10^6 does not overflow"]
+
+    // 6. Arena allocation boundary conditions
+    [! a [arena_new 1024]]
+    [! bad_alloc [arena_alloc a -10]]
+    [test_assert_eq runner bad_alloc -1 "Negative arena allocation rejected"]
+    [! good_alloc [arena_alloc a 64]]
+    [test_assert_eq runner good_alloc 0 "First valid arena allocation starts at 0"]
+
+    // 7. CLI argument [A 0] presence
+    [! prog_name [A 0]]
+    [! name_len [L prog_name]]
+    [test_assert_true runner [> name_len 0] "[A 0] contains program name"]
+
+    [test_summary runner]
+    [^ 0]
+  ]
+]
+
+[main]

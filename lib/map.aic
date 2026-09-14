@@ -18,9 +18,11 @@
 
 [: [$ map_new] [initial_cap] [D
   [! c [? [<= initial_cap 0] 16 initial_cap]]
-  [! kbuf [H [* c 8]]]
-  [! vbuf [H [* c 8]]]
-  [! m [Map kbuf vbuf c 0]]
+  [! p 16]
+  [W [< p c] [! p [* p 2]]]
+  [! kbuf [H [* p 8]]]
+  [! vbuf [H [* p 8]]]
+  [! m [Map kbuf vbuf p 0]]
   [^ m]
 ]]
 

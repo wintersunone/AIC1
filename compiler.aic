@@ -671,7 +671,6 @@
       [K h "    call    aic_strtol\n"]
     ] [D]]
   [? [== code 17] [D
-      [@@! ctx 14 1]
       [! a1e [next_child_end tokens match arg1]]
       [! arg2 [+ a1e 1]]
       [emit_expr tokens match src arg1 ctx]
@@ -680,11 +679,6 @@
       [! nlbl [string_label_num ctx mval]] [! nlbltxt [N nlbl]]
       [K h "    leaq    aicstr_"] [K h nlbltxt] [K h "(%rip), %rsi\n"]
       [K h "    call    aic_fopen\n"]
-      [! lbl [new_label_num ctx]] [! lbltxt [N lbl]]
-      [K h "    testq   %rax, %rax\n"]
-      [K h "    jne     .Lopenok"] [K h lbltxt] [K h "\n"]
-      [K h "    jmp     .Lruntimeerror\n"]
-      [K h ".Lopenok"] [K h lbltxt] [K h ":\n"]
     ] [D]]
   [? [== code 18] [D
       [emit_expr tokens match src arg1 ctx]
@@ -1983,7 +1977,7 @@
 [! string_start 0]
 [! atom_start 0]
 [! c 0]
-[W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
+[W [< i n] [! c [@ src i]] [? in_comment [D [? [== c 10] [! in_comment 0] [D]] [! i [+ i 1]]] [? in_string [? [&& [== c 92] [< [+ i 1] n]] [! i [+ i 2]] [? [== c 34] [D [! tok_count [write_token tokens tok_count 4 string_start [- i string_start]]] [! tok_count [+ tok_count 1]] [! in_string 0] [! i [+ i 1]]] [! i [+ i 1]]]] [? [|| [== c 91] [== c 93]] [D [! tok_count [write_token tokens tok_count [? [== c 91] 1 2] i 1]] [! tok_count [+ tok_count 1]] [! i [+ i 1]]] [? [== c 34] [D [! in_string 1] [! string_start [+ i 1]] [! i [+ i 1]]] [? [&& [== c 47] [&& [< [+ i 1] n] [== [@ src [+ i 1]] 47]]] [D [! in_comment 1] [! i [+ i 2]]] [? [is_space c] [! i [+ i 1]] [D [! atom_start i] [W [&& [< i n] [is_atom_char [@ src i]]] [! i [+ i 1]]] [! tok_count [write_token tokens tok_count 3 atom_start [- i atom_start]]] [! tok_count [+ tok_count 1]]]]]]]]]]
 
 [! stack [H [* tok_count 8]]]
 [! match [H [* tok_count 8]]]

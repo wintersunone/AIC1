@@ -117,7 +117,7 @@ def is_num(v):
 # Comments and strings are handled in a single pass, so a string containing
 # "//" is never truncated. Supports \" \\ \n \t escapes inside strings.
 
-_ESCAPES = {'"': '"', "\\": "\\", "n": "\n", "t": "\t"}
+_ESCAPES = {'"': '"', "\\": "\\", "n": "\n", "t": "\t", "r": "\r", "0": "\0"}
 
 def tokenize(source_code):
     tokens, lines_out = [], []
@@ -523,8 +523,8 @@ def _op_open(node, env):
         raise AICError(f"'O' mode must be \"r\", \"w\", or \"a\" - got {mode!r}")
     try:
         f = open(path, pymode)
-    except OSError as e:
-        raise AICError(f"'O' could not open '{path}' (mode '{mode}'): {e.strerror or e}")
+    except OSError:
+        return 0
     h = _next_handle[0]
     _next_handle[0] += 1
     _open_files[h] = f
@@ -532,6 +532,8 @@ def _op_open(node, env):
 
 def _resolve_handle(node, idx, env, op_name):
     h = to_int(eval_node(node[idx], env))
+    if h == 0:
+        raise AICError(f"'{op_name}': file handle is 0 (file open failed or invalid handle)")
     f = _open_files.get(h)
     if f is None:
         raise AICError(f"'{op_name}': file handle {h} is not open (never opened, or already closed)")
@@ -626,7 +628,7 @@ def _op_byteset(node, env):
 
 def _op_itoa(node, env):
     n = to_int(eval_node(node[1], env))
-    return bytearray(str(n), "latin-1")
+    return bytearray(str(n).encode("latin-1") + b'\x00')
 
 def _op_atoi(node, env):
     # Mirrors libc strtol(..., base=10): skip whitespace, optional sign,
@@ -634,7 +636,7 @@ def _op_atoi(node, env):
     # directly - this stays hand-written so both backends agree exactly.
     s = to_raw(eval_node(node[1], env))
     i, n = 0, len(s)
-    while i < n and s[i] in " \t\n": i += 1
+    while i < n and s[i] in " \t\r\n": i += 1
     neg = False
     if i < n and s[i] in "+-":
         neg = s[i] == "-"; i += 1

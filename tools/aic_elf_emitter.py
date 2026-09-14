@@ -165,7 +165,7 @@ class Assembler:
                 elif directive == '.rodata':
                     self.current_section = '.rodata'
                 elif directive == '.string':
-                    m = re.match(r'^"([^"]*)"', arg)
+                    m = re.match(r'^"((?:[^"\\]|\\.)*)"', arg)
                     s_bytes = unescape_gas_string(m.group(1)) + b'\0' if m else b'\0'
                     self.sections[self.current_section].extend(s_bytes)
                 elif directive == '.quad':
@@ -530,8 +530,10 @@ aic_init_arena:
     ret
 
 aic_calloc:
-aic_malloc:
     imulq   %rsi, %rdi
+    jmp     .Lalloc_common
+aic_malloc:
+.Lalloc_common:
     addq    $15, %rdi
     andq    $-16, %rdi
     leaq    aic_arena_ptr(%rip), %rcx
@@ -689,6 +691,8 @@ aic_runtime_error:
 aic_fopen:
     cmpb    $119, (%rsi)    // 'w'
     je      .Lopen_write
+    cmpb    $97, (%rsi)     // 'a'
+    je      .Lopen_append
     movq    $0, %rsi        // O_RDONLY
     movq    $0, %rdx
     movq    $2, %rax        // sys_open
@@ -701,6 +705,16 @@ aic_fopen:
 
 .Lopen_write:
     movq    $0x241, %rsi    // O_WRONLY | O_CREAT | O_TRUNC
+    movq    $0644, %rdx
+    movq    $2, %rax
+    syscall
+    testq   %rax, %rax
+    jge     .Lopen_done
+    movq    $0, %rax
+    ret
+
+.Lopen_append:
+    movq    $0x441, %rsi    // O_WRONLY | O_CREAT | O_APPEND
     movq    $0644, %rdx
     movq    $2, %rax
     syscall
@@ -760,8 +774,15 @@ aic_atoi:
     jmp     .Latoi_ws
 .Latoi_sign:
     cmpb    $45, %dl
-    jne     .Latoi_digits
+    je      .Latoi_neg
+    cmpb    $43, %dl
+    je      .Latoi_pos
+    jmp     .Latoi_digits
+.Latoi_neg:
     movq    $1, %rcx
+    incq    %rdi
+    jmp     .Latoi_digits
+.Latoi_pos:
     incq    %rdi
 .Latoi_digits:
     movzbq  (%rdi), %rdx

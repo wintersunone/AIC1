@@ -71,15 +71,25 @@ def cmd_run(args):
         print(f"[ERR] Source file '{src_file}' not found.")
         sys.exit(1)
 
+    extra = getattr(args, "extra_args", [])
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+
     if args.interp:
         import compiler
-        src = read_source_with_imports(src_file)
-        tokens, lines = tokenize(src)
-        ast = parse(tokens, lines)
-        env = Scope()
-        env.table["__name__"] = "__main__"
-        for node in ast:
-            eval_node(node, env)
+        old_argv = sys.argv
+        sys.argv = [src_file] + extra
+        try:
+            src = read_source_with_imports(src_file)
+            tokens, lines = tokenize(src)
+            env = Scope()
+            env.table["__name__"] = "__main__"
+            while tokens:
+                node = parse(tokens, lines)
+                if node is not None:
+                    eval_node(node, env)
+        finally:
+            sys.argv = old_argv
         return
 
     # Native compile & run
@@ -92,7 +102,7 @@ def cmd_run(args):
     cmd_build(args)
 
     try:
-        cmd = [os.path.abspath(out_file)]
+        cmd = [os.path.abspath(out_file)] + extra
         subprocess.run(cmd)
     finally:
         if os.path.exists(out_file):
@@ -104,6 +114,7 @@ def cmd_test(args):
         "test_stdlib.aic",
         "test_json.aic",
         "test_system.aic",
+        "test_edge_cases.aic",
     ]
     all_passed = True
     print("=" * 60)
@@ -211,6 +222,7 @@ def main():
     p_run = subparsers.add_parser("run", help="Compile and run an .aic program natively")
     p_run.add_argument("input", help="Input .aic file")
     p_run.add_argument("--interp", action="store_true", help="Run via reference interpreter instead of native binary")
+    p_run.add_argument("extra_args", nargs=argparse.REMAINDER, help="Optional arguments passed to the program")
     p_run.set_defaults(func=cmd_run)
 
     # test
