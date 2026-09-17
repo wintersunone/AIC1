@@ -2,7 +2,7 @@
 
 [:: VM code code_len pc stack sp call_stack csp regs running]
 
-[: [$ vm_new] [code code_len]
+[: [$ vm_new] [[$ code] code_len]
   [D
     [! stack [H [* 256 8]]]
     [! call_stack [H [* 64 8]]]
@@ -21,7 +21,7 @@
 
 [: vm_push [[$ vm] val]
   [D
-    [! stack [@@.VM:stack vm]]
+    [! stack [@@$.VM:stack vm]]
     [! sp [@@.VM:sp vm]]
     [@@! stack sp val]
     [@@!.VM:sp vm [+ sp 1]]
@@ -30,7 +30,7 @@
 
 [: vm_pop [[$ vm]]
   [D
-    [! stack [@@.VM:stack vm]]
+    [! stack [@@$.VM:stack vm]]
     [! sp [- [@@.VM:sp vm] 1]]
     [@@!.VM:sp vm sp]
     [^ [@@ stack sp]]
@@ -49,7 +49,7 @@
       0
     ]
 
-    [! code [@@.VM:code vm]]
+    [! code [@@$.VM:code vm]]
     [! op [@@ code pc]]
     [! next_pc [+ pc 1]]
     [@@!.VM:pc vm next_pc]
@@ -125,7 +125,7 @@
         [! reg_id [@@ code next_pc]]
         [@@!.VM:pc vm [+ next_pc 1]]
         [! val [vm_pop vm]]
-        [! regs [@@.VM:regs vm]]
+        [! regs [@@$.VM:regs vm]]
         [@@! regs reg_id val]
       ]
       0
@@ -135,7 +135,7 @@
       [D
         [! reg_id [@@ code next_pc]]
         [@@!.VM:pc vm [+ next_pc 1]]
-        [! regs [@@.VM:regs vm]]
+        [! regs [@@$.VM:regs vm]]
         [vm_push vm [@@ regs reg_id]]
       ]
       0
@@ -177,7 +177,7 @@
       [D
         [! target [@@ code next_pc]]
         [! ret_addr [+ next_pc 1]]
-        [! cstack [@@.VM:call_stack vm]]
+        [! cstack [@@$.VM:call_stack vm]]
         [! csp [@@.VM:csp vm]]
         [@@! cstack csp ret_addr]
         [@@!.VM:csp vm [+ csp 1]]
@@ -188,7 +188,7 @@
 
     [? [== op 14]
       [D
-        [! cstack [@@.VM:call_stack vm]]
+        [! cstack [@@$.VM:call_stack vm]]
         [! csp [- [@@.VM:csp vm] 1]]
         [@@!.VM:csp vm csp]
         [! ret_addr [@@ cstack csp]]
@@ -212,7 +212,10 @@
     ]
     [! sp [@@.VM:sp vm]]
     [? [> sp 0]
-      [^ [@@ [@@.VM:stack vm] [- sp 1]]]
+      [D
+        [! stk [@@$.VM:stack vm]]
+        [^ [@@ stk [- sp 1]]]
+      ]
       [^ 0]
     ]
   ]
@@ -222,8 +225,8 @@
   [D
     [! runner [test_runner_init]]
 
-    ;; Tier 1 Test (Stack Basics - 20 pts)
-    ;; Bytecode: [PUSH 42, PUSH 58, POP, HALT]
+    // Tier 1 Test (Stack Basics - 20 pts)
+    // Bytecode: [PUSH 42, PUSH 58, POP, HALT]
     [! c1 [H [* 6 8]]]
     [@@! c1 0 1]
     [@@! c1 1 42]
@@ -235,9 +238,9 @@
     [! r1 [vm_run vm1 1000]]
     [test_assert_eq runner r1 42 "Tier 1: Stack Basics top == 42"]
 
-    ;; Tier 2 Test (ALU Arithmetic - 20 pts)
-    ;; Bytecode: (100 - 40) * 3 / 2 == 90
-    ;; [PUSH 100, PUSH 40, SUB, PUSH 3, MUL, PUSH 2, DIV, HALT]
+    // Tier 2 Test (ALU Arithmetic - 20 pts)
+    // Bytecode: (100 - 40) * 3 / 2 == 90
+    // [PUSH 100, PUSH 40, SUB, PUSH 3, MUL, PUSH 2, DIV, HALT]
     [! c2 [H [* 12 8]]]
     [@@! c2 0 1]
     [@@! c2 1 100]
@@ -255,8 +258,8 @@
     [! r2 [vm_run vm2 1000]]
     [test_assert_eq runner r2 90 "Tier 2: ALU Arithmetic top == 90"]
 
-    ;; Tier 3 Test (Registers - 20 pts)
-    ;; Bytecode: [PUSH 777, STORE_REG 3, PUSH 23, LOAD_REG 3, ADD, HALT]
+    // Tier 3 Test (Registers - 20 pts)
+    // Bytecode: [PUSH 777, STORE_REG 3, PUSH 23, LOAD_REG 3, ADD, HALT]
     [! c3 [H [* 10 8]]]
     [@@! c3 0 1]
     [@@! c3 1 777]
@@ -272,8 +275,8 @@
     [! r3 [vm_run vm3 1000]]
     [test_assert_eq runner r3 800 "Tier 3: Registers top == 800"]
 
-    ;; Tier 4 Test (Control Flow Loop - 20 pts)
-    ;; Factorial of 5: R0 = 5, R1 = 1 -> R1 = 120
+    // Tier 4 Test (Control Flow Loop - 20 pts)
+    // Factorial of 5: R0 = 5, R1 = 1 -> R1 = 120
     [! c4 [H [* 34 8]]]
     [@@! c4 0 1]
     [@@! c4 1 5]
@@ -311,12 +314,13 @@
     [@@! c4 33 0]
     [! vm4 [vm_new c4 34]]
     [! r4 [vm_run vm4 10000]]
-    [! r1_val [@@ [@@.VM:regs vm4] 1]]
+    [! regs_buf [@@$.VM:regs vm4]]
+    [! r1_val [@@ regs_buf 1]]
     [test_assert_eq runner r1_val 120 "Tier 4: Loop Factorial(5) R1 == 120"]
     [test_assert_eq runner r4 120 "Tier 4: Loop Factorial(5) top == 120"]
 
-    ;; Tier 5 Test (Subroutines CALL & RET - 20 pts)
-    ;; Push 15, call square subroutine, return 225
+    // Tier 5 Test (Subroutines CALL & RET - 20 pts)
+    // Push 15, call square subroutine, return 225
     [! c5 [H [* 15 8]]]
     [@@! c5 0 1]
     [@@! c5 1 15]

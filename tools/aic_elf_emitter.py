@@ -808,6 +808,51 @@ aic_time:
     syscall
     ret
 
+aic_input:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    pushq   %rbx
+    pushq   %r12
+    movq    %rdi, %rbx
+    cmpq    $0, %rbx
+    je      .Linput_read
+    cmpb    $0, (%rbx)
+    je      .Linput_read
+    movq    $1, %rdi
+    movq    %rbx, %rsi
+    call    aic_print_str
+.Linput_read:
+    movq    $256, %rdi
+    call    aic_malloc
+    movq    %rax, %r12
+    movq    $0, %rdi
+    movq    %r12, %rsi
+    movq    $255, %rdx
+    movq    $0, %rax
+    syscall
+    cmpq    $0, %rax
+    jle     .Linput_empty
+    leaq    (%r12,%rax), %rcx
+    movb    $0, (%rcx)
+    decq    %rcx
+    cmpb    $10, (%rcx)
+    jne     .Linput_check_cr
+    movb    $0, (%rcx)
+    decq    %rcx
+.Linput_check_cr:
+    cmpb    $13, (%rcx)
+    jne     .Linput_done
+    movb    $0, (%rcx)
+    jmp     .Linput_done
+.Linput_empty:
+    movb    $0, (%r12)
+.Linput_done:
+    movq    %r12, %rax
+    popq    %r12
+    popq    %rbx
+    leave
+    ret
+
 aic_sprintf:
     pushq   %rbp
     movq    %rsp, %rbp

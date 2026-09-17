@@ -5,7 +5,7 @@
 [:: ViewState cx cy zoom_pct max_iter cols rows preset_id]
 
 // Helper: Concatenate two strings into a newly allocated heap buffer
-[: [$ concat2] [s1 s2] [D
+[: [$ concat2] [[$ s1] [$ s2]] [D
   [! len1 [L s1]]
   [! len2 [L s2]]
   [! buf [H [+ len1 len2]]]
@@ -29,7 +29,8 @@
      [^ "0.5x"]
      [D
        [! mag [/ zoom_pct 100]]
-       [^ [concat2 [N mag] "x"]]
+       [! mag_str [N mag]]
+       [^ [concat2 mag_str "x"]]
      ]]
 ]]
 
@@ -49,7 +50,7 @@
 ]]
 
 // Apply an interactive command to update the ViewState
-[: apply_command [state cmd] [D
+[: apply_command [[$ state] cmd] [D
   [! zoom [@@.ViewState:zoom_pct state]]
   [! pan_step [/ 4000000 zoom]]
   [? [< pan_step 1] [! pan_step 1] 0]
@@ -132,7 +133,7 @@
 ]]
 
 // Render the 60x18 Mandelbrot frame to standard output
-[: render_view [state] [D
+[: render_view [[$ state]] [D
   [! cx [@@.ViewState:cx state]]
   [! cy [@@.ViewState:cy state]]
   [! zoom [@@.ViewState:zoom_pct state]]
@@ -220,9 +221,12 @@
   [! arg [A 1]]
   [! has_arg 0]
   [? [!= arg 0]
-     [? [> [L arg] 0]
-        [! has_arg 1]
-        0]
+     [D
+       [! arg_l [L arg]]
+       [? [> arg_l 0]
+          [! has_arg 1]
+          0]
+     ]
      0]
 
   [? [== has_arg 1]
@@ -243,47 +247,40 @@
        [. "Script complete:" [N len] "command(s) executed."]
      ]
      [D
-       // Streamlined Guided Tour Mode: 4-step interactive demonstration
+       // Live Interactive Exploration Mode
        [! state [ViewState -75000 0 100 32 60 18 0]]
-
-       // Step 1: The Full Fractal (Overview)
-       [. ">> Step 1/4: The Full Fractal (Overview)"]
+       [. "=================================================="]
+       [. "    MANDELBROT EXPLORER (Live Interactive Mode)   "]
+       [. "=================================================="]
+       [. "Controls: W/A/S/D = Pan | + / - = Zoom | 1, 2, 3 = Presets | R = Reset | Q = Quit"]
+       [. ""]
        [render_view state]
        [. ""]
-
-       // Step 2: Seahorse Valley (Zoomed in 2x)
-       [. ">> Step 2/4: Seahorse Valley (Zoomed in 2x)"]
-       [apply_command state 49] // '1' -> Jump Seahorse
-       [apply_command state 43] // '+' -> Zoom in
-       [apply_command state 43] // '+' -> Zoom in
-       [render_view state]
-       [. ""]
-
-       // Step 3: Filaments (Pan Up & Right)
-       [. ">> Step 3/4: Exploring the Filaments"]
-       [apply_command state 119] // 'w' -> Pan Up
-       [apply_command state 119] // 'w' -> Pan Up
-       [apply_command state 100] // 'd' -> Pan Right
-       [render_view state]
-       [. ""]
-
-       // Step 4: Mini-Mandelbrot Satellite
-       [. ">> Step 4/4: Mini-Mandelbrot Satellite"]
-       [apply_command state 51] // '3' -> Jump Mini-Brot
-       [apply_command state 43] // '+' -> Zoom in
-       [render_view state]
-       [. ""]
-
-       // Quick Controls & Usage Guide
-       [. "=== Quick Controls ==="]
-       [. "  W / A / S / D  : Move Up / Left / Down / Right"]
-       [. "  + / -          : Zoom In / Zoom Out"]
-       [. "  1, 2, 3        : Jump to spots (1: Seahorse, 2: Elephant, 3: Mini-Set)"]
-       [. "  R              : Reset view"]
-       [. ""]
-       [. "=== How to Explore ==="]
-       [. "  aic.exe 09_interactive_mandelbrot.aic -- '1++'   (Jump to Seahorse and zoom in)"]
-       [. "  aic.exe 09_interactive_mandelbrot.aic -- 'www+'  (Pan up and zoom)"]
+       [! running 1]
+       [W [== running 1] [D
+         [! input_line [I "Command (WASD/+/-/123/R or Q to quit): "]]
+         [! in_len [L input_line]]
+         [? [== in_len 0]
+            0
+            [D
+              [! first_ch [@ input_line 0]]
+              [? [|| [== first_ch 113] [== first_ch 81]] // 'q' or 'Q'
+                 [D
+                   [! running 0]
+                   [. "Exiting Mandelbrot Explorer. Goodbye!"]
+                 ]
+                 [D
+                   [! k 0]
+                   [W [< k in_len] [D
+                     [! ch [@ input_line k]]
+                     [apply_command state ch]
+                     [! k [+ k 1]]
+                   ]]
+                   [render_view state]
+                   [. ""]
+                 ]]
+            ]]
+       ]]
      ]]
   [^ 0]
 ]]

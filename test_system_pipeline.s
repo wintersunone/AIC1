@@ -1021,6 +1021,23 @@ aicfn_io_file_exists:
     leave
     ret
 
+aicfn_io_read_line:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    subq    $16, %rsp
+    movq    %rdi, -8(%rbp)
+    movq    $0, -16(%rbp)
+    movq    -8(%rbp), %rax
+    movq    %rax, %rdi
+    call    aic_input
+    movq    %rax, -16(%rbp)
+    movq    -16(%rbp), %rax
+    jmp     .Lret_io_read_line
+    movq    $0, %rax
+.Lret_io_read_line:
+    leave
+    ret
+
 aicfn_str_len:
     pushq   %rbp
     movq    %rsp, %rbp

@@ -140,7 +140,7 @@
   [@> cap [i] [D
     [! k [@@$ kbuf i]]
     [? [!= k 0] [D
-      [vec_push v k]
+      [vec_push_ptr v k]
     ] [D]]
   ]]
   [^ v]
@@ -169,7 +169,7 @@
   [! kbuf [@@$.Map:keys m]]
   [! vbuf [@@$.Map:values m]]
   [! steps 0]
-  [! res 0]
+  [! res ""]
   [! found 0]
   [W [&& [== found 0] [< steps cap]] [D
     [! k [@@$ kbuf idx]]

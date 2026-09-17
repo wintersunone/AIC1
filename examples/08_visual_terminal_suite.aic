@@ -134,7 +134,7 @@
   ]
 ]
 
-[: count_neighbors [grid x y]
+[: count_neighbors [[$ grid] x y]
   [D
     [! count 0]
     [! dy -1]

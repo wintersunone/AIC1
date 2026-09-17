@@ -33,9 +33,10 @@ def cmd_build(args):
     aic_exe = "./aic.exe" if os.path.exists("aic.exe") else None
     if aic_exe and not args.force_python:
         res = subprocess.run([aic_exe, src_file, asm_file], capture_output=True, text=True)
-        if res.returncode != 0:
-            print(f"[ERR] Native compilation failed:\n{res.stderr or res.stdout}")
-            sys.exit(res.returncode)
+        out_msg = (res.stderr or "") + "\n" + (res.stdout or "")
+        if res.returncode != 0 or "[ERR :code" in out_msg:
+            print(f"[ERR] Native compilation failed:\n{out_msg.strip()}")
+            sys.exit(res.returncode if res.returncode != 0 else 1)
     else:
         from aic_codegen import compile_file
         try:

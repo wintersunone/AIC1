@@ -116,8 +116,9 @@ _WORD_PTR_OPS = {"@@$", "@@$!"}    # pointer-typed word slots - same bits as
                                     # every pointer through '@@' as INT and
                                     # losing the ability to '@'/'L' it again
 _LIBC_OPS = {"O": 2, "Z": 1, "R": 2, "K": 2, "X": 1,               # calls libc/runtime
-             "H": 1, "L": 1, "N": 1, "V": 1, "A": 1}
-_LIBC_STR_RETURN = {"H", "R", "N", "A"}                           # the rest return INT
+             "H": 1, "L": 1, "N": 1, "V": 1, "A": 1,
+             "I": 1, "F": 1, "T": 0}
+_LIBC_STR_RETURN = {"H", "R", "N", "A", "I"}                      # the rest return INT
 _RESERVED_NAMES = (_STMT_OPS | _CMP_OP_NAMES | set(_BYTE_OPS) | set(_WORD_OPS)
                     | set(_LIBC_OPS) | {"^", "§", ":"})
 _ARG_REGS = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
@@ -688,6 +689,18 @@ class Analyzer:
                 if t != INT:
                     raise CodegenError(f"Line {_line_of(node[0])}: 'N' takes a number to convert to a string")
                 return STR
+            elif op == "I":
+                t = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                if t != STR:
+                    raise CodegenError(f"Line {_line_of(node[0])}: 'I' takes a string prompt")
+                return STR
+            elif op == "F":
+                t = self.check_reads(node[1], declared, types, ctx_name, allow_return)
+                if t != STR:
+                    raise CodegenError(f"Line {_line_of(node[0])}: 'F' takes a pointer/buffer to free")
+                return INT
+            elif op == "T":
+                return INT
             else:  # "V"
                 t = self.check_reads(node[1], declared, types, ctx_name, allow_return)
                 if t != STR:
@@ -1395,6 +1408,19 @@ class Codegen:
             self.compile_expr(node[1])
             self.emit("    movq    %rax, %rdi")
             self.emit("    call    aic_arg")
+
+        elif op == "I":
+            self.compile_expr(node[1])
+            self.emit("    movq    %rax, %rdi")
+            self.emit("    call    aic_input")
+
+        elif op == "F":
+            self.compile_expr(node[1])
+            self.emit("    movq    %rax, %rdi")
+            self.emit("    call    aic_free")
+
+        elif op == "T":
+            self.emit("    call    aic_time")
 
     # --- statements ------------------------------------------------------------
     def compile_stmt(self, node):

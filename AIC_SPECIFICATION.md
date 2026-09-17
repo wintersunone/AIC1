@@ -67,6 +67,21 @@ Expr           ::= IntegerLiteral
                  | SliceExpr
                  | TernaryExpr
                  | ShortCircuitExpr
+                 | IntrinsicExpr
+
+IntrinsicExpr  ::= '[' 'H' Expr ']'               (* Heap allocate: size *)
+                 | '[' 'F' Expr ']'               (* Heap free: ptr *)
+                 | '[' 'I' Expr ']'               (* Console input: prompt *)
+                 | '[' 'T' ']'                    (* Monotonic millisecond timestamp *)
+                 | '[' 'L' Expr ']'               (* String length: str *)
+                 | '[' 'N' Expr ']'               (* Int to string: int *)
+                 | '[' 'V' Expr ']'               (* String to int: str *)
+                 | '[' 'A' Expr ']'               (* CLI argument: index *)
+                 | '[' 'O' Expr Expr ']'          (* File open: path mode *)
+                 | '[' 'Z' Expr ']'               (* File size: handle *)
+                 | '[' 'R' Expr Expr ']'          (* File read: handle len *)
+                 | '[' 'K' Expr Expr Expr ']'     (* File write: handle buf len *)
+                 | '[' 'X' Expr ']'               (* File close: handle *)
 
 BinaryExpr     ::= '[' BinOp Expr Expr ']'
 BinOp          ::= '+' | '-' | '*' | '/' | '%'
@@ -140,9 +155,12 @@ Creates:
 - Bulk Setter: `[@@!.Point p x_val y_val]` (writes all fields contiguously in one operation).
 - Constants: `Point:size` (number of words, e.g., 2), `Point.bytes` (byte size, e.g., 16).
 
-### 4.2 Heap Management
-- `[H size]`: Allocates `size + 1` zeroed bytes (via `aic_calloc`), returning a pointer.
+### 4.2 Heap Management & System Primitives
+- `[H size]`: Allocates `size + 1` zeroed bytes (via `aic_calloc`), returning a pointer to a mutable buffer.
 - `[F ptr]`: Releases memory allocated with `H` (via `free`).
+- `[I prompt]`: Writes prompt string to stdout, reads a line of input from stdin into a newly allocated heap buffer, and returns a string pointer.
+- `[T]`: Returns the current high-resolution monotonic millisecond timestamp (64-bit integer).
+- `[A idx]`: Accesses command-line arguments passed to the program (`[A 0]` is binary/script path, `[A 1]` is first argument).
 
 ### 4.3 Word vs Byte Addressing
 - Byte operations (`@`, `@!`): Index is in **bytes** (`buffer + index`).
@@ -153,22 +171,40 @@ Creates:
 
 ## 5. ABI & Calling Conventions
 
-AIC compiles strictly to **System V AMD64 ABI** and **Windows x64 ABI**:
+AIC compiles strictly to **System V AMD64 ABI** (Linux) and **Windows x64 ABI** (Windows):
 - **Registers for Integer/Pointer Parameters (Args 1-6)**:
-  `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`
+  `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9` (System V) / `%rcx`, `%rdx`, `%r8`, `%r9` (Windows shadow space).
 - **Arbitrary Parameter Count ($N > 6$)**:
   Stack-spilled via 16-byte aligned caller displacement and callee frame copies (`16 + (i - 6) * 8(%rbp)`).
 - **Return Value**: Passed in `%rax`.
 - **Stack Alignment Invariant**:
-  The stack pointer `%rsp` must be 16-byte aligned before any `call` instruction. Top-level statements and intermediate variables maintain alignment. Libc operations (`O`, `Z`, `R`, `K`, `X`, `N`, `V`, `L`, `H`) must be bound to a local variable before passing to nested expressions:
+  The stack pointer `%rsp` must be 16-byte aligned before any `call` instruction. Top-level statements and intermediate variables maintain alignment. Libc and runtime intrinsic operations (`O`, `Z`, `R`, `K`, `X`, `N`, `V`, `L`, `H`, `I`, `F`, `T`) must be bound to a local variable before passing to nested expressions:
   ```aic
   // CORRECT:
   [! sz [Z handle]]
   [! buf [R handle sz]]
 
-  // PROHIBITED (violates stack-frame alignment across tree depths):
+  // PROHIBITED (violates stack-frame alignment across arbitrary tree depths):
   [! buf [R handle [Z handle]]]
   ```
+
+### 5.1 Runtime Intrinsic Operations Table
+
+| Opcode | Parameters | Return Type | C Runtime / Syscall Equivalent | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `H` | `size: int` | `STR` | `calloc(1, size + 1)` | Allocate zero-initialized heap buffer |
+| `F` | `ptr: str` | `INT` (0) | `free(ptr)` | Deallocate heap buffer |
+| `I` | `prompt: str` | `STR` | SysV `sys_read(0)` / Win32 `ReadFile` | Interactive console prompt & line read |
+| `T` | *(none)* | `INT` | `clock_gettime(MONOTONIC)` / `GetTickCount64` | Current millisecond timestamp |
+| `L` | `s: str` | `INT` | `strlen(s)` | String length (bytes up to null terminator) |
+| `N` | `n: int` | `STR` | `sprintf("%ld")` | Format signed 64-bit integer to decimal string |
+| `V` | `s: str` | `INT` | `strtoll(s, ...)` | Parse decimal string to signed 64-bit integer |
+| `A` | `idx: int` | `STR` | `argv[idx]` | Access command-line argument string |
+| `O` | `path: str, mode: str` | `INT` | `fopen(path, mode)` | Open file stream (handle) |
+| `Z` | `handle: int` | `INT` | `fseek(SEEK_END)` + `ftell` | Query file size in bytes |
+| `R` | `handle: int, len: int` | `STR` | `fread(buf, 1, len, handle)` | Read `len` bytes from file into new buffer |
+| `K` | `handle: int, buf: str, len: int` | `INT` | `fwrite(buf, 1, len, handle)` | Write `len` bytes from buffer to file |
+| `X` | `handle: int` | `INT` | `fclose(handle)` | Close file stream |
 
 ---
 
@@ -289,7 +325,8 @@ Linear memory arena allocator for high-performance memory pooling:
 ```aic
 [import "lib/io.aic"]
 ```
-Safe file system operations:
+Safe file system and interactive I/O operations:
+- `[io_read_line prompt] -> str`: Prints prompt to console and reads a line from stdin into a heap string buffer.
 - `[io_read_file path] -> str`: Reads entire file into a heap string buffer.
 - `[io_write_file path content] -> int`: Writes string to file, returns 1 on success.
 - `[io_append_file path content] -> int`: Appends string to file.

@@ -4894,7 +4894,7 @@ aicfn_map_keys:
     pushq   %rax
     popq    %rsi
     popq    %rdi
-    call    aicfn_vec_push
+    call    aicfn_vec_push_ptr
     jmp     .Lendif262
 .Lelse261:
 .Lendif262:
@@ -5034,7 +5034,7 @@ aicfn_map_get_ptr:
     movq    %rax, -96(%rbp)
     movq    $0, %rax
     movq    %rax, -88(%rbp)
-    movq    $0, %rax
+    leaq    aicstr_13(%rip), %rax
     movq    %rax, -80(%rbp)
     movq    $0, %rax
     movq    %rax, -32(%rbp)

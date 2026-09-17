@@ -16,7 +16,7 @@
     [? [<= sz 0]
       [^ -1]
       [D
-        [! buf [@@.MinHeap:buf h]]
+        [! buf [@@$.MinHeap:buf h]]
         [^ [@@ buf 0]]
       ]
     ]
@@ -25,7 +25,7 @@
 
 [: heap_push [[$ h] val]
   [D
-    [! buf [@@.MinHeap:buf h]]
+    [! buf [@@$.MinHeap:buf h]]
     [! sz [@@.MinHeap:size h]]
     [@@! buf sz val]
     [! idx sz]
@@ -56,7 +56,7 @@
     [? [<= sz 0]
       [^ -1]
       [D
-        [! buf [@@.MinHeap:buf h]]
+        [! buf [@@$.MinHeap:buf h]]
         [! min_val [@@ buf 0]]
         [! last_idx [- sz 1]]
         [@@!.MinHeap:size h last_idx]
@@ -103,7 +103,7 @@
   ]
 ]
 
-[: heapsort [arr n]
+[: heapsort [[$ arr] n]
   [D
     [! h [heap_new n]]
     [! i 0]
