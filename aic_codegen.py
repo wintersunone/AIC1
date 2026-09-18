@@ -1628,13 +1628,23 @@ runtimeerr_msg_end:
             f'{label}:\n    .string "{self._escape_asm_string(text)}"'
             for text, label in self.str_labels.items()
         )
+        # ponytail: Windows x64 vs SysV(glibc) C runtime bridge is selected by
+        # platform. AIC codegen emits libc args in Windows order (arg1->rdi,
+        # arg2->rsi, arg3->rdx, arg4->rcx); each bridge maps that into its
+        # target ABI. The generated .s references identical label names in
+        # both, so switching bridges is the only per-platform change.
+        # Upgrade path: emit both conventions from codegen (an ABI flag) if
+        # a third target (e.g. macOS/Apple SysV) is ever needed.
+        import sys as _sys
+        bridge_file = os.path.join(os.path.dirname(__file__), "tools",
+                                   "aic_wincrt_bridge.s" if _sys.platform == "win32"
+                                   else "aic_linux_bridge.s")
+        if not os.path.exists(bridge_file):
+            bridge_file = os.path.join(os.path.dirname(__file__), "tools",
+                                       "aic_wincrt_bridge.s")
         bridge_asm = ""
-        bridge_file = os.path.join(os.path.dirname(__file__), "tools", "aic_wincrt_bridge.s")
         if os.path.exists(bridge_file):
             with open(bridge_file, "r", encoding="utf-8") as f:
-                bridge_asm = f.read()
-        elif os.path.exists("tools/aic_wincrt_bridge.s"):
-            with open("tools/aic_wincrt_bridge.s", "r", encoding="utf-8") as f:
                 bridge_asm = f.read()
 
         return f"""\

@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.tmp
 tools/__pycache__/
+.idea/
+out.s
+out_body.s
+build_artifacts/

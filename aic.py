@@ -29,8 +29,10 @@ def cmd_build(args):
 
     asm_file = f"{os.path.splitext(src_file)[0]}.s"
 
-    # 1. Compile to assembly using native aic.exe if available, else python codegen
-    aic_exe = "./aic.exe" if os.path.exists("aic.exe") else None
+    # 1. Compile to assembly using native aic.exe (Windows) / aic.elf (Linux)
+    #    if available, else python codegen.
+    _native = "./aic.exe" if sys.platform == "win32" else "./aic.elf"
+    aic_exe = _native if os.path.exists(_native) else None
     if aic_exe and not args.force_python:
         res = subprocess.run([aic_exe, src_file, asm_file], capture_output=True, text=True)
         out_msg = (res.stderr or "") + "\n" + (res.stdout or "")
@@ -112,10 +114,10 @@ def cmd_run(args):
 
 def cmd_test(args):
     suites = [
-        "test_stdlib.aic",
-        "test_json.aic",
-        "test_system.aic",
-        "test_edge_cases.aic",
+        "tests/test_stdlib.aic",
+        "tests/test_json.aic",
+        "tests/test_system.aic",
+        "tests/test_edge_cases.aic",
     ]
     all_passed = True
     print("=" * 60)

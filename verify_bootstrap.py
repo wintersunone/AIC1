@@ -90,7 +90,7 @@ def main():
         "Stage 6: Package standalone native compiler aic.exe (Direct PE emitter)")
 
     # 7. Native aic.exe compiles user program
-    run(["./aic.exe", "stage9_src.aic", "stage9_test.s"],
+    run(["./aic.exe", "tests/stage9_src.aic", "stage9_test.s"],
         "Stage 7: Native aic.exe compiles user program stage9_src.aic -> stage9_test.s")
 
     # 8. Assemble user binary via Direct PE emitter
@@ -110,7 +110,7 @@ def main():
     print("    >>> USER PROGRAM EXECUTION VERIFIED CLEAN: main-total 7 / from-fn <<<")
 
     # 10. Native aic.exe compiles test_record.aic (Milestone 1 dogfood test)
-    run(["./aic.exe", "test_record.aic", "test_record_pipeline.s"],
+    run(["./aic.exe", "tests/test_record.aic", "test_record_pipeline.s"],
         "Stage 10: Native aic.exe compiles test_record.aic -> test_record_pipeline.s")
 
     # 11. Assemble test_record.exe via Direct PE emitter
@@ -140,7 +140,7 @@ def main():
     print(f"    >>> STAGE 3 DIRECT PE CLOSURE VERIFIED: 0-diff (Size: {sz_pe:,} bytes) <<<")
 
     # 14. AIC 3.0 Optimizations & Standalone Linux ELF64 Cross-Platform Emitter
-    run(["./aic.exe", "test_optimizations.aic", "test_opt_pipeline.s"],
+    run(["./aic.exe", "tests/test_optimizations.aic", "test_opt_pipeline.s"],
         "Stage 14a: Native aic.exe compiles test_optimizations.aic -> test_opt_pipeline.s")
 
     run([sys.executable, "tools/aic_pe_emitter.py", "test_opt_pipeline.s", "-o", "test_opt_pipeline.exe"],
@@ -183,7 +183,7 @@ def main():
     print(f"    >>> LINUX ELF64 BINARY VALIDATED: Entry {e_entry:#x}, {e_phnum} PT_LOAD segments ({len(elf_bytes):,} bytes) <<<")
 
     # 15. Standard Library & Modular Imports
-    run(["./aic.exe", "test_stdlib.aic", "test_stdlib_pipeline.s"],
+    run(["./aic.exe", "tests/test_stdlib.aic", "test_stdlib_pipeline.s"],
         "Stage 15a: Native aic.exe compiles test_stdlib.aic with modular imports -> test_stdlib_pipeline.s")
 
     run([sys.executable, "tools/aic_pe_emitter.py", "test_stdlib_pipeline.s", "-o", "test_stdlib_pipeline.exe"],
@@ -215,7 +215,7 @@ def main():
     print(f"    >>> STDLIB LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
     # 16. Pure-AIC JSON Parser & Serializer Verification
-    run(["./aic.exe", "test_json.aic", "test_json_pipeline.s"],
+    run(["./aic.exe", "tests/test_json.aic", "test_json_pipeline.s"],
         "Stage 16a: Native aic.exe compiles test_json.aic -> test_json_pipeline.s")
 
     run([sys.executable, "tools/aic_pe_emitter.py", "test_json_pipeline.s", "-o", "test_json_pipeline.exe"],
@@ -239,7 +239,7 @@ def main():
     print(f"    >>> JSON LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
     # 17. System Architecture, Arena Allocator & File I/O Verification
-    run(["./aic.exe", "test_system.aic", "test_system_pipeline.s"],
+    run(["./aic.exe", "tests/test_system.aic", "test_system_pipeline.s"],
         "Stage 17a: Native aic.exe compiles test_system.aic -> test_system_pipeline.s")
 
     run([sys.executable, "tools/aic_pe_emitter.py", "test_system_pipeline.s", "-o", "test_system_pipeline.exe"],
