@@ -1810,7 +1810,15 @@
 ]]
 
 [§ emit_note_section [h] [D
-  [copy_file_to "tools/aic_wincrt_bridge.s" h]
+  // C-runtime bridge is host-ABI-specific (MinGW vs SysV/glibc). The invoker
+  // passes the platform bridge path as argv[3]; default to the Windows bridge
+  // when omitted so existing Windows builds are unchanged. ponytail: this is
+  // the one deliberately host-dependent piece; the AIC codegen above it is a
+  // platform-neutral fixed point.
+  [! bp [A 3]]
+  [! bl [L bp]]
+  [? [== bl 0] [! bp "tools/aic_wincrt_bridge.s"] [D]]
+  [copy_file_to bp h]
   [^ 0]
 ]]
 
@@ -1890,7 +1898,48 @@
   [^ 0]
 ]]
 
+// str_find_bytes hay haylen needle ndlen -> index of first occurrence, or -1
+[§ str_find_bytes [[$ hay] haylen [$ needle] ndlen] [D
+  [? [== ndlen 0] [^ 0] [D]]
+  [? [> ndlen haylen] [^ -1] [D]]
+  [! lim [- haylen ndlen]]
+  [! i 0]
+  [! found -1]
+  [W [&& [== found -1] [<= i lim]] [D
+    [! j 0]
+    [! ok 1]
+    [W [&& [== ok 1] [< j ndlen]] [D
+      [? [!= [@ hay [+ i j]] [@ needle j]] [! ok 0] [D]]
+      [! j [+ j 1]]
+    ]]
+    [? [== ok 1] [! found i] [D]]
+    [! i [+ i 1]]
+  ]]
+  [^ found]
+]]
+
+// mark_import_line src n pos -> src with "//" inserted immediately before byte
+// at index pos (turns the import into a comment so the scanner skips it).
+[§ [$ mark_import_line] [[$ src] n pos] [D
+  [! nb [H [+ n 2]]]
+  [@> pos [ci] [D
+    [@! nb ci [@ src ci]]
+  ]]
+  [@! nb pos 47]
+  [@! nb [+ pos 1] 47]
+  [W [< pos n] [D
+    [@! nb [+ pos 2] [@ src pos]]
+    [! pos [+ pos 1]]
+  ]]
+  [^ nb]
+]]
+
 [§ [$ expand_source] [[$ src] n] [D
+  // ponytail: import dedup is a naive "content already present?" byte scan
+  // (O(sources^2)) + a "//" marker so already-skipped imports are skipped
+  // again. Fine while stdlib libs are small; if the corpus ever contains
+  // large or intentionally-duplicated library text, switch to a real
+  // visited-path set (compare against Python's read_source_with_imports).
   [! cur_src src]
   [! cur_n n]
   [! changed 1]
@@ -1901,6 +1950,8 @@
     [! path_st -1]
     [! p_len 0]
     [! p_end -1]
+    [! mark_pos -1]
+    [! lib_len 0]
     [W [&& [== found -1] [<= p [- cur_n 10]]] [D
       [! c0 [@ cur_src p]]
       [? [== c0 91] [D
@@ -1924,33 +1975,48 @@
             ] [D]]
           ] [D]]
         ] [D]]
+        // If this import is already marked with "//" (a duplicate we skipped),
+        // move on without re-processing.
+        [? [&& [!= is_imp 0] [&& [> p 1] [== [@ cur_src [- p 1]] 47]]] [D
+          [! found -1]
+        ] [D]]
       ] [D]]
       [! p [+ p 1]]
     ]]
     [? [!= found -1] [D
       [! lib_path [slice_str cur_src path_st p_len]]
       [! lh [O lib_path "r"]]
-      [! ln [Z lh]]
-      [! lib_src [R lh ln]]
+      [! lib_len [Z lh]]
+      [! lib_src [R lh lib_len]]
       [X lh]
-      [! end_tok [+ p_end 1]]
-      [! suf_len [- cur_n end_tok]]
-      [! new_len [+ [+ found ln] [+ 1 suf_len]]]
-      [! new_buf [H new_len]]
-      [@> found [ci] [D
-        [@! new_buf ci [@ cur_src ci]]
+      // Dedup: if this library's full content is already in cur_src (i.e. an
+      // earlier import already inlined it), just mark the import as a comment
+      // so we skip it. Mirrors Python's visited-set semantics.
+      [! dup [str_find_bytes cur_src cur_n lib_src lib_len]]
+      [? [!= dup -1] [D
+        [! cur_src [mark_import_line cur_src cur_n found]]
+        [! cur_n [+ cur_n 2]]
+        [! changed 1]
+      ] [D
+        [! end_tok [+ p_end 1]]
+        [! suf_len [- cur_n end_tok]]
+        [! new_len [+ [+ found lib_len] [+ 1 suf_len]]]
+        [! new_buf [H new_len]]
+        [@> found [ci] [D
+          [@! new_buf ci [@ cur_src ci]]
+        ]]
+        [@> lib_len [li] [D
+          [@! new_buf [+ found li] [@ lib_src li]]
+        ]]
+        [@! new_buf [+ found lib_len] 10]
+        [@> suf_len [si] [D
+          [@! new_buf [+ [+ [+ found lib_len] 1] si] [@ cur_src [+ end_tok si]]]
+        ]]
+        [@! new_buf new_len 0]
+        [! cur_src new_buf]
+        [! cur_n new_len]
+        [! changed 1]
       ]]
-      [@> ln [li] [D
-        [@! new_buf [+ found li] [@ lib_src li]]
-      ]]
-      [@! new_buf [+ found ln] 10]
-      [@> suf_len [si] [D
-        [@! new_buf [+ [+ [+ found ln] 1] si] [@ cur_src [+ end_tok si]]]
-      ]]
-      [@! new_buf new_len 0]
-      [! cur_src new_buf]
-      [! cur_n new_len]
-      [! changed 1]
     ] [D]]
   ]]
   [^ cur_src]

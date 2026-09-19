@@ -9,6 +9,7 @@ test, and verify AIC programs across Windows (PE32+) and Linux (ELF64).
 import sys
 import os
 import argparse
+import shutil
 import subprocess
 from compiler import read_source_with_imports, eval_node, tokenize, parse, Scope, OPS
 
@@ -29,17 +30,32 @@ def cmd_build(args):
 
     asm_file = f"{os.path.splitext(src_file)[0]}.s"
 
-    # 1. Compile to assembly using native aic.exe (Windows) / aic.elf (Linux)
-    #    if available, else python codegen.
+    # 1. Compile to assembly. Prefer the native self-hosted compiler
+    #    (aic.exe on Windows / aic.elf on Linux); if it is missing or
+    #    crashes (stale/corrupt artifact), fall back to the Python host
+    #    codegen, which emits the same asm + the platform bridge.
+    #    The C-runtime bridge is host-ABI-specific (MinGW vs SysV/glibc);
+    #    pass it as argv[3] so the native compiler's output matches this host.
     _native = "./aic.exe" if sys.platform == "win32" else "./aic.elf"
     aic_exe = _native if os.path.exists(_native) else None
+    _bridge = "tools/aic_wincrt_bridge.s" if sys.platform == "win32" else "tools/aic_linux_bridge.s"
+    native_ok = False
     if aic_exe and not args.force_python:
-        res = subprocess.run([aic_exe, src_file, asm_file], capture_output=True, text=True)
+        res = subprocess.run([aic_exe, src_file, asm_file, _bridge], capture_output=True, text=True)
         out_msg = (res.stderr or "") + "\n" + (res.stdout or "")
-        if res.returncode != 0 or "[ERR :code" in out_msg:
-            print(f"[ERR] Native compilation failed:\n{out_msg.strip()}")
-            sys.exit(res.returncode if res.returncode != 0 else 1)
-    else:
+        if res.returncode == 0 and "[ERR :code" not in out_msg and os.path.exists(asm_file):
+            native_ok = True
+        else:
+            # ponytail: native compiler crashed or reported a compile error.
+            # A crash (no [ERR :code], no asm) means the artifact is stale ->
+            # fall back to Python host codegen instead of failing the build.
+            # A real compile error (asm absent, [ERR :code] present) is kept.
+            if "[ERR :code" not in out_msg:
+                print(f"[warn] native {os.path.basename(aic_exe)} failed (rc={res.returncode}); using Python host codegen")
+            else:
+                print(f"[ERR] Native compilation failed:\n{out_msg.strip()}")
+                sys.exit(res.returncode if res.returncode != 0 else 1)
+    if not native_ok:
         from aic_codegen import compile_file
         try:
             compile_file(src_file, asm_file)
@@ -55,11 +71,27 @@ def cmd_build(args):
         pe_emitter.build_standalone_pe(asm_content, out_file)
         print(f"[OK] Standalone PE32+ executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
     elif target == "elf":
-        import tools.aic_elf_emitter as elf_emitter
-        with open(asm_file, "r", encoding="utf-8") as f:
-            asm_content = f.read()
-        elf_emitter.build_standalone_elf(asm_content, out_file)
-        print(f"[OK] Standalone Linux ELF64 executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        # ponytail: On Linux prefer cross/native GCC (the SysV bridge + glibc
+        # path, verified running under qemu/binfmt). The zero-dep ELF emitter
+        # is a fallback only — its embedded shims segfault under qemu for
+        # real programs. On a native x86-64 Linux box, plain `gcc` works; on
+        # other arches we need the cross compiler. Add a per-arch toolchain
+        # table if more targets are needed.
+        gcc = ("gcc" if (sys.platform == "linux" and os.uname().machine == "x86_64")
+               else "x86_64-linux-gnu-gcc") if sys.platform != "win32" else None
+        used_gcc = False
+        if gcc and shutil.which(gcc):
+            res = subprocess.run([gcc, "-static", "-O2", asm_file, "-o", out_file],
+                                 capture_output=True, text=True)
+            if res.returncode == 0 and os.path.exists(out_file):
+                used_gcc = True
+                print(f"[OK] Standalone ELF64 executable ({gcc}): {out_file} ({os.path.getsize(out_file):,} bytes)")
+        if not used_gcc:
+            import tools.aic_elf_emitter as elf_emitter
+            with open(asm_file, "r", encoding="utf-8") as f:
+                asm_content = f.read()
+            elf_emitter.build_standalone_elf(asm_content, out_file)
+            print(f"[OK] Standalone Linux ELF64 executable (direct emitter): {out_file} ({os.path.getsize(out_file):,} bytes)")
     else:
         print(f"[ERR] Unknown target '{target}'")
         sys.exit(1)
@@ -106,11 +138,14 @@ def cmd_run(args):
 
     try:
         cmd = [os.path.abspath(out_file)] + extra
-        subprocess.run(cmd)
+        rc = subprocess.run(cmd).returncode
     finally:
         if os.path.exists(out_file):
             try: os.remove(out_file)
             except: pass
+    if rc != 0:
+        print(f"[ERR] '{src_file}' exited with code {rc}")
+        sys.exit(rc)
 
 def cmd_test(args):
     suites = [

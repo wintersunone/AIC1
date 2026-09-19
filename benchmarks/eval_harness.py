@@ -30,7 +30,7 @@ def evaluate_task(task_id, solution_code, test_code):
     """Compiles and executes a single task natively with test assertions."""
     tmp_src = os.path.join(BASE_DIR, "benchmarks", f"tmp_{task_id.replace('/', '_')}.aic")
     tmp_asm = os.path.join(BASE_DIR, "benchmarks", f"tmp_{task_id.replace('/', '_')}.s")
-    tmp_exe = os.path.join(BASE_DIR, "benchmarks", f"tmp_{task_id.replace('/', '_')}.exe")
+    tmp_exe = os.path.join(BASE_DIR, "benchmarks", f"tmp_{task_id.replace('/', '_').replace('AIC_', '')}_run" + (".exe" if sys.platform == "win32" else ".elf"))
 
     full_src = f"""// Auto-generated evaluation for {task_id}
 [import "lib/test.aic"]
@@ -42,22 +42,17 @@ def evaluate_task(task_id, solution_code, test_code):
     with open(tmp_src, "w", encoding="utf-8") as f:
         f.write(full_src)
 
-    aic_exe = os.path.join(BASE_DIR, "aic.exe")
     passed = False
     error_msg = ""
-
+    # Platform handling (native compiler vs Python fallback, PE vs ELF,
+    # cross-gcc under binfmt-qemu on non-x86 hosts) all lives in aic.py build.
     try:
-        # 1. Compile to ASM
-        c_res = subprocess.run([aic_exe, tmp_src, tmp_asm], capture_output=True, text=True, cwd=BASE_DIR)
-        if c_res.returncode != 0:
+        # 1+2. Compile + link via the unified toolchain CLI
+        c_res = subprocess.run([sys.executable, "aic.py", "build", tmp_src, "-o", tmp_exe],
+                               capture_output=True, text=True, cwd=BASE_DIR)
+        if c_res.returncode != 0 or not os.path.exists(tmp_exe):
             error_msg = f"Compilation Error: {c_res.stderr or c_res.stdout}"
             return False, error_msg
-
-        # 2. Package to PE
-        import tools.aic_pe_emitter as pe_emitter
-        with open(tmp_asm, "r", encoding="utf-8") as f:
-            asm_code = f.read()
-        pe_emitter.build_standalone_pe(asm_code, tmp_exe)
 
         # 3. Execute native binary
         r_res = subprocess.run([tmp_exe], capture_output=True, text=True, cwd=BASE_DIR, timeout=5)

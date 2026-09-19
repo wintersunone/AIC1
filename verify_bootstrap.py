@@ -21,10 +21,21 @@ import sys
 import time
 
 
-def run(cmd, desc):
+def x86_gcc():
+    """Compiler for x86-64 asm: native gcc on x86_64, static cross-gcc
+    otherwise (output runs under binfmt-qemu). ponytail: if you need more
+    target arches, turn this into a per-arch toolchain table."""
+    if sys.platform == "linux" and os.uname().machine != "x86_64":
+        cross = shutil.which("x86_64-linux-gnu-gcc")
+        return [cross] + ["-static"] if cross else None
+    native = shutil.which("gcc")
+    return [native] if native else None
+
+
+def run(cmd, desc, cwd=None):
     print(f"[*] {desc}...")
     t0 = time.time()
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     dt = time.time() - t0
     if p.returncode != 0:
         print(f"[FAIL] {desc} exited with code {p.returncode}")
@@ -44,61 +55,81 @@ def main():
     print("AIC Self-Hosting Bootstrap Verification Pipeline")
     print("=" * 70)
 
+    _gcc = x86_gcc()
+    _linux = sys.platform == "linux"
+    # C-runtime bridge is host-ABI-specific (MinGW vs SysV/glibc). Pass it to
+    # the native compiler as argv[3] so its codegen matches the Python host's.
+    _bridge = "tools/aic_linux_bridge.s" if _linux else "tools/aic_wincrt_bridge.s"
+    if _linux and os.uname().machine != "x86_64":
+        print(f"[*] Non-x86_64 Linux host: using {_gcc[0]} (static cross) + binfmt-qemu for x86-64 artifacts")
+
+    os.makedirs("build_artifacts", exist_ok=True)
+
     # 1. Host compile
-    run([sys.executable, "aic_codegen.py", "compiler.aic", "compiler_gen0.s"],
+    run([sys.executable, "aic_codegen.py", "compiler.aic", "build_artifacts/compiler_gen0.s"],
         "Stage 1: Python host compiles compiler.aic -> compiler_gen0.s")
 
     # 2. Gen 0 link (Direct PE emitter or GCC if available)
-    if shutil.which("gcc"):
-        run(["gcc", "-O2", "compiler_gen0.s", "-o", "compiler_gen0.exe"],
+    _gcc = x86_gcc()
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/compiler_gen0.s", "-o", "build_artifacts/compiler_gen0.exe"],
             "Stage 2: Assemble & link compiler_gen0.exe (GCC)")
     else:
-        run([sys.executable, "tools/aic_pe_emitter.py", "compiler_gen0.s", "-o", "compiler_gen0.exe"],
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/compiler_gen0.s", "-o", "build_artifacts/compiler_gen0.exe"],
             "Stage 2: Assemble & link compiler_gen0.exe (Direct PE emitter)")
 
     # 3. Gen 1 native compilation
-    run(["./compiler_gen0.exe", "compiler.aic", "compiler_gen1.s"],
+    run(["build_artifacts/compiler_gen0.exe", "compiler.aic", "build_artifacts/compiler_gen1.s", _bridge],
         "Stage 3: Run native compiler_gen0.exe on compiler.aic -> compiler_gen1.s")
 
-    if not filecmp.cmp("compiler_gen0.s", "compiler_gen1.s", shallow=False):
+    if not filecmp.cmp("build_artifacts/compiler_gen0.s", "build_artifacts/compiler_gen1.s", shallow=False):
         print("[FAIL] compiler_gen0.s and compiler_gen1.s differ!")
         sys.exit(1)
-    sz0 = os.path.getsize("compiler_gen0.s")
-    sz1 = os.path.getsize("compiler_gen1.s")
+    sz0 = os.path.getsize("build_artifacts/compiler_gen0.s")
+    sz1 = os.path.getsize("build_artifacts/compiler_gen1.s")
     print(f"    >>> STAGE 1 CLOSURE VERIFIED: 0-diff (Size: {sz0:,} bytes) <<<")
 
     # 4. Gen 1 link (Direct PE emitter or GCC if available)
-    if shutil.which("gcc"):
-        run(["gcc", "-O2", "compiler_gen1.s", "-o", "compiler_gen1.exe"],
+    _gcc = x86_gcc()
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/compiler_gen1.s", "-o", "build_artifacts/compiler_gen1.exe"],
             "Stage 4: Assemble & link compiler_gen1.exe (GCC)")
     else:
-        run([sys.executable, "tools/aic_pe_emitter.py", "compiler_gen1.s", "-o", "compiler_gen1.exe"],
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/compiler_gen1.s", "-o", "build_artifacts/compiler_gen1.exe"],
             "Stage 4: Assemble & link compiler_gen1.exe (Direct PE emitter)")
 
     # 5. Gen 2 native compilation
-    run(["./compiler_gen1.exe", "compiler.aic", "compiler_gen2.s"],
+    run(["build_artifacts/compiler_gen1.exe", "compiler.aic", "build_artifacts/compiler_gen2.s", _bridge],
         "Stage 5: Run native compiler_gen1.exe on compiler.aic -> compiler_gen2.s")
 
-    if not filecmp.cmp("compiler_gen1.s", "compiler_gen2.s", shallow=False):
+    if not filecmp.cmp("build_artifacts/compiler_gen1.s", "build_artifacts/compiler_gen2.s", shallow=False):
         print("[FAIL] compiler_gen1.s and compiler_gen2.s differ!")
         sys.exit(1)
-    sz2 = os.path.getsize("compiler_gen2.s")
+    sz2 = os.path.getsize("build_artifacts/compiler_gen2.s")
     print(f"    >>> STAGE 2 FIXED-POINT CLOSURE VERIFIED: 0-diff (Size: {sz2:,} bytes) <<<")
 
-    # 6. Standalone aic.exe packaging (Direct PE/COFF, zero GCC)
-    run([sys.executable, "tools/aic_pe_emitter.py", "compiler_gen1.s", "-o", "aic.exe"],
-        "Stage 6: Package standalone native compiler aic.exe (Direct PE emitter)")
+    # 6. Standalone native compiler artifact (aic.exe PE on Windows / aic.elf ELF on Linux)
+    if _linux:
+        # gcc already linked the working compiler as compiler_gen1.exe (static x86-64 ELF)
+        shutil.copyfile("build_artifacts/compiler_gen1.exe", "aic.elf")
+        print("[*] Stage 6: Reuse gcc-linked compiler as standalone aic.elf")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/compiler_gen1.s", "-o", "aic.exe"],
+            "Stage 6: Package standalone native compiler aic.exe (Direct PE emitter)")
+    _aic = "./aic.elf" if _linux else "./aic.exe"
+    run([_aic, "tests/stage9_src.aic", "build_artifacts/stage9_test.s", _bridge],
+        "Stage 7: Native compiler compiles user program stage9_src.aic -> stage9_test.s")
 
-    # 7. Native aic.exe compiles user program
-    run(["./aic.exe", "tests/stage9_src.aic", "stage9_test.s"],
-        "Stage 7: Native aic.exe compiles user program stage9_src.aic -> stage9_test.s")
-
-    # 8. Assemble user binary via Direct PE emitter
-    run([sys.executable, "tools/aic_pe_emitter.py", "stage9_test.s", "-o", "stage9_test.exe"],
-        "Stage 8: Package user binary stage9_test.exe (Direct PE emitter)")
+    # 8. Assemble user binary
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/stage9_test.s", "-o", "build_artifacts/stage9_test.exe"],
+            "Stage 8: Assemble & link stage9_test.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/stage9_test.s", "-o", "build_artifacts/stage9_test.exe"],
+            "Stage 8: Package user binary stage9_test.exe (Direct PE emitter)")
 
     # 9. Execute native user binary
-    p_prog = run(["./stage9_test.exe"], "Stage 9: Execute native user binary stage9_test.exe")
+    p_prog = run(["build_artifacts/stage9_test.exe"], "Stage 9: Execute native user binary stage9_test.exe")
     expected_output = "main-total 7\nfrom-fn\n"
     out = p_prog.stdout.replace("\r\n", "\n")
     if out != expected_output:
@@ -109,16 +140,20 @@ def main():
         sys.exit(1)
     print("    >>> USER PROGRAM EXECUTION VERIFIED CLEAN: main-total 7 / from-fn <<<")
 
-    # 10. Native aic.exe compiles test_record.aic (Milestone 1 dogfood test)
-    run(["./aic.exe", "tests/test_record.aic", "test_record_pipeline.s"],
-        "Stage 10: Native aic.exe compiles test_record.aic -> test_record_pipeline.s")
+    # 10. Native compiler compiles test_record.aic (Milestone 1 dogfood test)
+    run([_aic, "tests/test_record.aic", "build_artifacts/test_record_pipeline.s", _bridge],
+        "Stage 10: Native compiler compiles test_record.aic -> test_record_pipeline.s")
 
-    # 11. Assemble test_record.exe via Direct PE emitter
-    run([sys.executable, "tools/aic_pe_emitter.py", "test_record_pipeline.s", "-o", "test_record_pipeline.exe"],
-        "Stage 11: Package test_record_pipeline.exe (Direct PE emitter)")
+    # 11. Assemble test_record.exe (GCC on x86-64 hosts / binfmt-qemu cross, else Direct PE emitter)
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/test_record_pipeline.s", "-o", "build_artifacts/test_record_pipeline.exe"],
+            "Stage 11: Assemble & link test_record_pipeline.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/test_record_pipeline.s", "-o", "build_artifacts/test_record_pipeline.exe"],
+            "Stage 11: Package test_record_pipeline.exe (Direct PE emitter)")
 
     # 12. Execute native test_record binary
-    p_rec = run(["./test_record_pipeline.exe"], "Stage 12: Execute test_record_pipeline.exe")
+    p_rec = run(["build_artifacts/test_record_pipeline.exe"], "Stage 12: Execute test_record_pipeline.exe")
     expected_rec = "101 202 303\n404 505 606\nsize= 3 bytes= 24\nk= 0\nk= 1\nk= 2\n"
     out_rec = p_rec.stdout.replace("\r\n", "\n")
     if out_rec != expected_rec:
@@ -129,24 +164,28 @@ def main():
         sys.exit(1)
     print("    >>> S-RECORD & BOUNDED LOOP EXECUTION VERIFIED CLEAN <<<")
 
-    # 13. Pure Direct PE self-hosting closure: native PE aic.exe compiles compiler.aic
-    run(["./aic.exe", "compiler.aic", "compiler_gen_pe.s"],
-        "Stage 13: Direct PE aic.exe compiles compiler.aic -> compiler_gen_pe.s")
+    # 13. Self-hosting closure: native compiler (gen1) recompiles compiler.aic
+    run([_aic, "compiler.aic", "build_artifacts/compiler_gen_pe.s", _bridge],
+        "Stage 13: Native compiler recompiles compiler.aic -> compiler_gen_pe.s")
 
-    if not filecmp.cmp("compiler_gen1.s", "compiler_gen_pe.s", shallow=False):
+    if not filecmp.cmp("build_artifacts/compiler_gen1.s", "build_artifacts/compiler_gen_pe.s", shallow=False):
         print("[FAIL] compiler_gen1.s and compiler_gen_pe.s differ!")
         sys.exit(1)
-    sz_pe = os.path.getsize("compiler_gen_pe.s")
+    sz_pe = os.path.getsize("build_artifacts/compiler_gen_pe.s")
     print(f"    >>> STAGE 3 DIRECT PE CLOSURE VERIFIED: 0-diff (Size: {sz_pe:,} bytes) <<<")
 
     # 14. AIC 3.0 Optimizations & Standalone Linux ELF64 Cross-Platform Emitter
-    run(["./aic.exe", "tests/test_optimizations.aic", "test_opt_pipeline.s"],
-        "Stage 14a: Native aic.exe compiles test_optimizations.aic -> test_opt_pipeline.s")
+    run([_aic, "tests/test_optimizations.aic", "build_artifacts/test_opt_pipeline.s", _bridge],
+        "Stage 14a: Native compiler compiles test_optimizations.aic -> test_opt_pipeline.s")
 
-    run([sys.executable, "tools/aic_pe_emitter.py", "test_opt_pipeline.s", "-o", "test_opt_pipeline.exe"],
-        "Stage 14b: Package test_opt_pipeline.exe (Direct PE emitter)")
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/test_opt_pipeline.s", "-o", "build_artifacts/test_opt_pipeline.exe"],
+            "Stage 14b: Assemble & link test_opt_pipeline.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/test_opt_pipeline.s", "-o", "build_artifacts/test_opt_pipeline.exe"],
+            "Stage 14b: Package test_opt_pipeline.exe (Direct PE emitter)")
 
-    p_opt = run(["./test_opt_pipeline.exe"], "Stage 14c: Execute native test_opt binary")
+    p_opt = run(["build_artifacts/test_opt_pipeline.exe"], "Stage 14c: Execute native test_opt binary")
     expected_opt = (
         "Direct ctor: 10 20 30\n"
         "Hash ctor: 40 50 60\n"
@@ -167,10 +206,10 @@ def main():
         sys.exit(1)
     print("    >>> RECORD CTOR, BULK SETTER & HARDWARE SLICING VERIFIED CLEAN <<<")
 
-    run([sys.executable, "tools/aic_elf_emitter.py", "test_opt_pipeline.s", "-o", "test_opt_pipeline.elf"],
+    run([sys.executable, "tools/aic_elf_emitter.py", "build_artifacts/test_opt_pipeline.s", "-o", "build_artifacts/test_opt_pipeline.elf"],
         "Stage 14d: Generate standalone Linux ELF64 binary test_opt_pipeline.elf")
 
-    with open("test_opt_pipeline.elf", "rb") as f_elf:
+    with open("build_artifacts/test_opt_pipeline.elf", "rb") as f_elf:
         elf_bytes = f_elf.read()
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     assert elf_bytes[4] == 2, "Not 64-bit ELF class"
@@ -183,13 +222,17 @@ def main():
     print(f"    >>> LINUX ELF64 BINARY VALIDATED: Entry {e_entry:#x}, {e_phnum} PT_LOAD segments ({len(elf_bytes):,} bytes) <<<")
 
     # 15. Standard Library & Modular Imports
-    run(["./aic.exe", "tests/test_stdlib.aic", "test_stdlib_pipeline.s"],
-        "Stage 15a: Native aic.exe compiles test_stdlib.aic with modular imports -> test_stdlib_pipeline.s")
+    run([_aic, "tests/test_stdlib.aic", "build_artifacts/test_stdlib_pipeline.s", _bridge],
+        "Stage 15a: Native compiler compiles test_stdlib.aic with modular imports -> test_stdlib_pipeline.s")
 
-    run([sys.executable, "tools/aic_pe_emitter.py", "test_stdlib_pipeline.s", "-o", "test_stdlib_pipeline.exe"],
-        "Stage 15b: Package test_stdlib_pipeline.exe (Direct PE emitter)")
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/test_stdlib_pipeline.s", "-o", "build_artifacts/test_stdlib_pipeline.exe"],
+            "Stage 15b: Assemble & link test_stdlib_pipeline.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/test_stdlib_pipeline.s", "-o", "build_artifacts/test_stdlib_pipeline.exe"],
+            "Stage 15b: Package test_stdlib_pipeline.exe (Direct PE emitter)")
 
-    p_stdlib = run(["./test_stdlib_pipeline.exe"],
+    p_stdlib = run(["build_artifacts/test_stdlib_pipeline.exe"],
                    "Stage 15c: Execute native test_stdlib binary")
     expected_stdlib = (
         "Math: 99 17 42 100 1024 6 36 12\n"
@@ -206,22 +249,26 @@ def main():
         sys.exit(1)
     print("    >>> STANDARD LIBRARY (MATH, STRING, VEC, MAP) & MODULAR IMPORTS VERIFIED CLEAN <<<")
 
-    run([sys.executable, "tools/aic_elf_emitter.py", "test_stdlib_pipeline.s", "-o", "test_stdlib_pipeline.elf"],
+    run([sys.executable, "tools/aic_elf_emitter.py", "build_artifacts/test_stdlib_pipeline.s", "-o", "build_artifacts/test_stdlib_pipeline.elf"],
         "Stage 15d: Generate standalone Linux ELF64 binary test_stdlib_pipeline.elf")
 
-    with open("test_stdlib_pipeline.elf", "rb") as f_self:
+    with open("build_artifacts/test_stdlib_pipeline.elf", "rb") as f_self:
         elf_bytes = f_self.read()
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     print(f"    >>> STDLIB LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
     # 16. Pure-AIC JSON Parser & Serializer Verification
-    run(["./aic.exe", "tests/test_json.aic", "test_json_pipeline.s"],
-        "Stage 16a: Native aic.exe compiles test_json.aic -> test_json_pipeline.s")
+    run([_aic, "tests/test_json.aic", "build_artifacts/test_json_pipeline.s", _bridge],
+        "Stage 16a: Native compiler compiles test_json.aic -> test_json_pipeline.s")
 
-    run([sys.executable, "tools/aic_pe_emitter.py", "test_json_pipeline.s", "-o", "test_json_pipeline.exe"],
-        "Stage 16b: Package test_json_pipeline.exe (Direct PE emitter)")
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/test_json_pipeline.s", "-o", "build_artifacts/test_json_pipeline.exe"],
+            "Stage 16b: Assemble & link test_json_pipeline.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/test_json_pipeline.s", "-o", "build_artifacts/test_json_pipeline.exe"],
+            "Stage 16b: Package test_json_pipeline.exe (Direct PE emitter)")
 
-    p_json = run(["./test_json_pipeline.exe"],
+    p_json = run(["build_artifacts/test_json_pipeline.exe"],
                  "Stage 16c: Execute native test_json binary")
     out_json = p_json.stdout.replace("\r\n", "\n")
     if "(ALL PASSED)" not in out_json:
@@ -230,22 +277,26 @@ def main():
         sys.exit(1)
     print("    >>> PURE-AIC JSON PARSER & SERIALIZER (20/20 TESTS) VERIFIED CLEAN <<<")
 
-    run([sys.executable, "tools/aic_elf_emitter.py", "test_json_pipeline.s", "-o", "test_json_pipeline.elf"],
+    run([sys.executable, "tools/aic_elf_emitter.py", "build_artifacts/test_json_pipeline.s", "-o", "build_artifacts/test_json_pipeline.elf"],
         "Stage 16d: Generate standalone Linux ELF64 binary test_json_pipeline.elf")
 
-    with open("test_json_pipeline.elf", "rb") as f_jelf:
+    with open("build_artifacts/test_json_pipeline.elf", "rb") as f_jelf:
         elf_bytes = f_jelf.read()
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     print(f"    >>> JSON LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
     # 17. System Architecture, Arena Allocator & File I/O Verification
-    run(["./aic.exe", "tests/test_system.aic", "test_system_pipeline.s"],
-        "Stage 17a: Native aic.exe compiles test_system.aic -> test_system_pipeline.s")
+    run([_aic, "tests/test_system.aic", "build_artifacts/test_system_pipeline.s", _bridge],
+        "Stage 17a: Native compiler compiles test_system.aic -> test_system_pipeline.s")
 
-    run([sys.executable, "tools/aic_pe_emitter.py", "test_system_pipeline.s", "-o", "test_system_pipeline.exe"],
-        "Stage 17b: Package test_system_pipeline.exe (Direct PE emitter)")
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/test_system_pipeline.s", "-o", "build_artifacts/test_system_pipeline.exe"],
+            "Stage 17b: Assemble & link test_system_pipeline.exe (GCC)")
+    else:
+        run([sys.executable, "tools/aic_pe_emitter.py", "build_artifacts/test_system_pipeline.s", "-o", "build_artifacts/test_system_pipeline.exe"],
+            "Stage 17b: Package test_system_pipeline.exe (Direct PE emitter)")
 
-    p_sys = run(["./test_system_pipeline.exe"],
+    p_sys = run(["build_artifacts/test_system_pipeline.exe"],
                 "Stage 17c: Execute native test_system binary")
     out_sys = p_sys.stdout.replace("\r\n", "\n")
     if "(ALL PASSED)" not in out_sys:
@@ -254,17 +305,23 @@ def main():
         sys.exit(1)
     print("    >>> ARENA ALLOCATOR & FILE I/O (14/14 TESTS) VERIFIED CLEAN <<<")
 
-    run([sys.executable, "tools/aic_elf_emitter.py", "test_system_pipeline.s", "-o", "test_system_pipeline.elf"],
+    run([sys.executable, "tools/aic_elf_emitter.py", "build_artifacts/test_system_pipeline.s", "-o", "build_artifacts/test_system_pipeline.elf"],
         "Stage 17d: Generate standalone Linux ELF64 binary test_system_pipeline.elf")
 
-    with open("test_system_pipeline.elf", "rb") as f_self:
+    with open("build_artifacts/test_system_pipeline.elf", "rb") as f_self:
         elf_bytes = f_self.read()
     assert elf_bytes[:4] == b"\x7fELF", "Invalid ELF magic bytes"
     print(f"    >>> SYSTEM LINUX ELF64 BINARY VALIDATED ({len(elf_bytes):,} bytes) <<<")
 
-    # 18. Standalone Linux ELF64 Compiler Binary (aic.elf) Verification
-    run([sys.executable, "tools/aic_elf_emitter.py", "compiler_gen_pe.s", "-o", "aic.elf"],
-        "Stage 18: Package standalone Linux native compiler aic.elf (Direct ELF emitter)")
+    # 18. Standalone Linux ELF64 Compiler Binary (aic.elf)
+    # gcc/static build (runs natively or under binfmt-qemu); the zero-dep
+    # direct emitter is a fallback when no x86-64 gcc is available.
+    if _gcc:
+        run(_gcc + ["-O2", "build_artifacts/compiler_gen_pe.s", "-o", "aic.elf"],
+            "Stage 18: Build standalone Linux native compiler aic.elf (GCC)")
+    else:
+        run([sys.executable, "tools/aic_elf_emitter.py", "build_artifacts/compiler_gen_pe.s", "-o", "aic.elf"],
+            "Stage 18: Package standalone Linux native compiler aic.elf (Direct ELF emitter)")
 
     with open("aic.elf", "rb") as f_aic_elf:
         aic_elf_bytes = f_aic_elf.read()

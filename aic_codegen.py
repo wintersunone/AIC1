@@ -1253,7 +1253,7 @@ class Codegen:
         self.emit(f"    movq    ${size * 8 + 1}, %rdi")
         self.emit("    movq    $1, %rsi")
         self.emit("    call    aic_calloc")
-        self.needs_io_guard = True
+        self.needs_runtime_guard = True
         ok = self.new_label("allocok")
         self.emit("    testq   %rax, %rax")
         self.emit(f"    jne     {ok}")
@@ -1274,7 +1274,7 @@ class Codegen:
         self.emit("    incq    %rdi")
         self.emit("    movq    $1, %rsi")
         self.emit("    call    aic_calloc")
-        self.needs_io_guard = True
+        self.needs_runtime_guard = True
         ok = self.new_label("allocok")
         self.emit("    testq   %rax, %rax")
         self.emit(f"    jne     {ok}")

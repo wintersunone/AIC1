@@ -15,7 +15,8 @@
 [! j_num [json_parse "12345"]]
 [test_assert_eq runner [json_tag j_num] 2 "json_parse '12345' tag is INT"]
 [test_assert_eq runner [json_get_int j_num] 12345 "json_parse '12345' value is 12345"]
-[test_assert_str_eq runner [json_stringify j_num] "12345" "json_stringify int matches"]
+[! j_num_str [json_stringify j_num]]
+[test_assert_str_eq runner j_num_str "12345" "json_stringify int matches"]
 
 [! j_neg [json_parse "-999"]]
 [test_assert_eq runner [json_get_int j_neg] -999 "json_parse '-999' value is -999"]

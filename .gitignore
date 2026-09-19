@@ -6,3 +6,5 @@ tools/__pycache__/
 out.s
 out_body.s
 build_artifacts/
+*.core
+*.txt
