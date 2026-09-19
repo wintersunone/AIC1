@@ -175,7 +175,7 @@ aic_input:
     movq    %rdi, %rsi                # prompt -> printf arg2
     leaq    aic_win_fmt_err(%rip), %rdi  # fmt "%s" -> printf arg1
     call    printf
-    movq    $1, %rdi                  # fflush(stdout)
+    movq    stdout(%rip), %rdi        # fflush(stdout FILE*) — literal 1 is the fd, not the FILE*; static glibc dereferences it and faults
     call    fflush
     movq    $64, %rdi                 # malloc(64)
     call    malloc

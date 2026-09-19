@@ -1,0 +1,229 @@
+{
+  "language_pass@1": {
+    "aic": 0.0,
+    "c": 1.0,
+    "python": 1.0
+  },
+  "language_silent_wrong": {
+    "aic": 1.0,
+    "c": 0.0,
+    "python": 0.05714285714285714
+  },
+  "aic_zero_shot": 0.0,
+  "aic_spec_in_context": 0.0,
+  "pass_agg": {
+    "1/aic/zero_shot": [
+      0.0,
+      2
+    ],
+    "1/aic/spec_in_context": [
+      0.0,
+      2
+    ],
+    "1/c/zero_shot": [
+      1.0,
+      8
+    ],
+    "1/c/spec_in_context": [
+      1.0,
+      8
+    ],
+    "1/python/zero_shot": [
+      1.0,
+      8
+    ],
+    "1/python/spec_in_context": [
+      1.0,
+      8
+    ],
+    "2/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "2/aic/spec_in_context": [
+      0.0,
+      2
+    ],
+    "2/c/zero_shot": [
+      1.0,
+      7
+    ],
+    "2/c/spec_in_context": [
+      1.0,
+      7
+    ],
+    "2/python/zero_shot": [
+      1.0,
+      7
+    ],
+    "2/python/spec_in_context": [
+      1.0,
+      7
+    ],
+    "3/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "3/aic/spec_in_context": [
+      0.0,
+      1
+    ],
+    "3/c/zero_shot": [
+      0.0,
+      0
+    ],
+    "3/c/spec_in_context": [
+      0.0,
+      0
+    ],
+    "3/python/zero_shot": [
+      1.0,
+      2
+    ],
+    "3/python/spec_in_context": [
+      1.0,
+      3
+    ],
+    "4/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/aic/spec_in_context": [
+      0.0,
+      0
+    ],
+    "4/c/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/c/spec_in_context": [
+      0.0,
+      0
+    ],
+    "4/python/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/python/spec_in_context": [
+      0.0,
+      0
+    ]
+  },
+  "silent_agg": {
+    "1/aic/zero_shot": [
+      1.0,
+      2
+    ],
+    "1/aic/spec_in_context": [
+      1.0,
+      2
+    ],
+    "1/c/zero_shot": [
+      0.0,
+      8
+    ],
+    "1/c/spec_in_context": [
+      0.0,
+      8
+    ],
+    "1/python/zero_shot": [
+      0.125,
+      8
+    ],
+    "1/python/spec_in_context": [
+      0.125,
+      8
+    ],
+    "2/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "2/aic/spec_in_context": [
+      1.0,
+      2
+    ],
+    "2/c/zero_shot": [
+      0.0,
+      7
+    ],
+    "2/c/spec_in_context": [
+      0.0,
+      7
+    ],
+    "2/python/zero_shot": [
+      0.0,
+      7
+    ],
+    "2/python/spec_in_context": [
+      0.0,
+      7
+    ],
+    "3/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "3/aic/spec_in_context": [
+      1.0,
+      1
+    ],
+    "3/c/zero_shot": [
+      0.0,
+      0
+    ],
+    "3/c/spec_in_context": [
+      0.0,
+      0
+    ],
+    "3/python/zero_shot": [
+      0.0,
+      2
+    ],
+    "3/python/spec_in_context": [
+      0.0,
+      3
+    ],
+    "4/aic/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/aic/spec_in_context": [
+      0.0,
+      0
+    ],
+    "4/c/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/c/spec_in_context": [
+      0.0,
+      0
+    ],
+    "4/python/zero_shot": [
+      0.0,
+      0
+    ],
+    "4/python/spec_in_context": [
+      0.0,
+      0
+    ]
+  },
+  "aic_error_categories": {
+    "none": 16,
+    "PARSE": 1
+  },
+  "llm_failed_total": 407,
+  "llm_failed_by": {
+    "aic/spec_in_context": 108,
+    "aic/zero_shot": 115,
+    "c/zero_shot": 59,
+    "python/zero_shot": 38,
+    "python/spec_in_context": 40,
+    "c/spec_in_context": 47
+  },
+  "aic_failure_decomposition": {
+    "format_only": 16,
+    "value_differs": 0,
+    "compile_runtime_error": 1,
+    "total_nonpass": 17
+  }
+}
