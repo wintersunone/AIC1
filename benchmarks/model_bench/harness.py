@@ -30,7 +30,7 @@ BASE_URL = os.environ.get("AIC_BENCH_BASE", "http://100.124.137.82:8888").rstrip
 API_KEY = os.environ.get("AIC_BENCH_API_KEY", "")
 TEMPERATURE = 0.7
 MAX_TOKENS = 8000
-LLM_TIMEOUT = 300          # per chat/completions call — model is slow-reasoning (~70s/call)
+LLM_TIMEOUT = 360          # per chat/completions call — model is slow-reasoning (AIC ~150-400s)
 RUN_TIMEOUT = 5            # candidate run (catch infinite loops)
 BUILD_TIMEOUT = 90         # candidate build/compile
 LLM_RETRIES = 3
@@ -236,6 +236,9 @@ SCORE = {"aic": score_aic, "c": score_c, "python": score_py}
 
 # ---------------- cell runner ----------------
 def completed_cells():
+    """A cell is 'done' only if it has a record with real (non-empty) code.
+    llm_failed / empty-code records do NOT count — those cells get retried on
+    resume, so a transient endpoint failure never permanently loses a cell."""
     done = set()
     if not os.path.exists(OUT):
         return done
@@ -243,7 +246,8 @@ def completed_cells():
         for line in f:
             try:
                 rec = json.loads(line)
-                done.add((rec["task_id"], rec["language"], rec["condition"], rec["sample_index"]))
+                if (rec.get("raw_candidate_code") or "").strip():
+                    done.add((rec["task_id"], rec["language"], rec["condition"], rec["sample_index"]))
             except Exception:
                 pass
     return done

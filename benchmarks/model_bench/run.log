@@ -77,3 +77,34 @@
 12:10:35 t24 c      spe      s2 pass=False silent=False cat=CODEGEN
 12:10:35 t24 c      spe      s1 pass=False silent=False cat=CODEGEN
 12:10:35 progress 75/267 (44 min)
+13:19:33 [c+py] starting 316 cells, 8 workers
+13:19:58 t6  c      zer      s1 pass=True silent=False cat=none
+13:20:04 t6  c      zer      s0 pass=True silent=False cat=none
+13:20:09 t3  c      zer      s0 pass=True silent=False cat=none
+13:20:15 t4  c      zer      s1 pass=True silent=False cat=none
+13:20:42 t12 python zer      s2 pass=True silent=False cat=none
+13:21:09 t11 c      zer      s0 pass=True silent=False cat=none
+13:21:30 t12 python spe      s3 pass=True silent=False cat=none
+13:21:34 t11 c      zer      s1 pass=True silent=False cat=none
+13:21:39 t12 python spe      s2 pass=True silent=False cat=none
+13:22:18 t12 python spe      s0 pass=True silent=False cat=none
+13:22:18 [c+py] 10/316 (3m)
+13:22:46 t11 c      zer      s4 pass=True silent=False cat=none
+13:22:51 t12 python spe      s4 pass=True silent=False cat=none
+13:23:28 t13 c      zer      s0 pass=True silent=False cat=none
+13:23:37 t13 c      zer      s4 pass=True silent=False cat=none
+13:24:52 t12 python zer      s3 pass=True silent=False cat=none
+13:26:24 t13 c      spe      s3 pass=True silent=False cat=none
+13:27:13 t13 c      zer      s1 pass=True silent=False cat=none
+13:27:38 t14 c      zer      s1 pass=True silent=False cat=none
+13:28:25 t14 c      spe      s0 pass=True silent=False cat=none
+13:40:59 [c+py] starting 297 cells, 8 workers
+13:43:21 t14 c      spe      s1 pass=True silent=False cat=none
+13:43:31 t14 c      zer      s0 pass=True silent=False cat=none
+13:43:50 t12 python zer      s1 pass=True silent=False cat=none
+14:03:39 [c+py] starting 294 cells, 4 workers
+14:04:56 t13 c      zer      s3 pass=True silent=False cat=none
+14:05:08 t14 c      zer      s4 pass=True silent=False cat=none
+14:07:53 t14 c      spe      s2 pass=True silent=False cat=none
+14:08:20 t14 c      zer      s3 pass=True silent=False cat=none
+14:08:28 t14 c      zer      s2 pass=True silent=False cat=none
