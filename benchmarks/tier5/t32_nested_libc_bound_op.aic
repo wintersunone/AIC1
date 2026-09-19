@@ -1,0 +1,9 @@
+// prohibited pattern: [R handle [Z handle]] nested directly (libc-bound op as arg)
+[! h [O "tier5_src.txt" "w"]]
+[K h "hello world"]
+[X h]
+[! h2 [O "tier5_src.txt" "r"]]
+[! buf [R h2 [Z h2]]]
+[! n [Z h2]]
+[. "len=" n "\n"]
+[X h2]

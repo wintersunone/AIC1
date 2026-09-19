@@ -1,0 +1,150 @@
+[
+  {
+    "task_id": 31,
+    "file": "t31_undeclared_var.aic",
+    "expect": "SEMANTIC UNRESOLVED_READ-class (201/202)",
+    "verdict": "MATCH - correct typed error fired",
+    "python": {
+      "rc": 1,
+      "err": null,
+      "compiled": false,
+      "output_tail": ":code 400 :kind CODEGEN :msg \"Line 2: variable 'y' is read but never assigned anywhere in function 'f' (only its own parameters/locals are visible - no implicit access to caller or global variables)\"]"
+    },
+    "native": {
+      "rc": 0,
+      "err": [
+        202,
+        "SEMANTIC",
+        "UNRESOLVED_READ"
+      ],
+      "compiled": false,
+      "output_tail": "S_TOTAL= 1 RESOLVED= 1 UNRESOLVED= 0\n[ERR :code 202 :kind SEMANTIC :msg UNRESOLVED_READ :fn 0 :byte 20 :len 1 ]\n=== stage 6b: read validation, functions ===\nFN_READS_TOTAL= 1 RESOLVED= 0 UNRESOLVED= 1"
+    }
+  },
+  {
+    "task_id": 32,
+    "file": "t32_nested_libc_bound_op.aic",
+    "expect": "caught error OR FLAGGED silent wrong output/miscompile",
+    "verdict": "NOT CAUGHT - compiled, linked, ran clean, output correct this run (UB pattern)",
+    "python": {
+      "rc": 1,
+      "err": null,
+      "compiled": false,
+      "output_tail": "her expression. Native codegen doesn\\'t track stack alignment through arbitrary nesting for calls into the C runtime, so assign the result to a variable first, e.g. [! h [O path \"r\"]] then use \\'h\\'']"
+    },
+    "native": {
+      "rc": 0,
+      "err": null,
+      "compiled": true,
+      "output_tail": "0\nALL_WORDPTRSET(@@$!)= 0\n=== stage 6b: read validation, main ===\nMAIN_READS_TOTAL= 7 RESOLVED= 7 UNRESOLVED= 0\n=== stage 6b: read validation, functions ===\nFN_READS_TOTAL= 0 RESOLVED= 0 UNRESOLVED= 0",
+      "ran": true,
+      "run_rc": 0,
+      "run_out": "len= 11",
+      "silent_suspect": true,
+      "run_err": null,
+      "note": "No error at compile or run; output 'len= 11' is correct for this run (file has 11 bytes). The pattern is NOT statically enforced (as the spec anticipates) and is documented as undefined behavior: identical nesting of other libc-bound ops (e.g. [N v] as a nested argument to a function call) segfaults under qemu. Outcome: no typed error; correctness of this run is luck of stack alignment, not a guarantee."
+    }
+  },
+  {
+    "task_id": 33,
+    "file": "t33_division_by_zero.aic",
+    "expect": "RUNTIME DIVISION_BY_ZERO (502)",
+    "verdict": "MATCH - correct typed error fired",
+    "python": {
+      "rc": 0,
+      "err": null,
+      "compiled": true,
+      "output_tail": "wrote /tmp/tier5_python_33.s",
+      "ran": true,
+      "run_rc": 1,
+      "run_out": "[ERR :code 502 :kind RUNTIME :msg DIVISION_BY_ZERO]",
+      "silent_suspect": false,
+      "run_err": [
+        502,
+        "RUNTIME",
+        "DIVISION_BY_ZERO"
+      ]
+    },
+    "native": {
+      "rc": 0,
+      "err": null,
+      "compiled": true,
+      "output_tail": "0\nALL_WORDPTRSET(@@$!)= 0\n=== stage 6b: read validation, main ===\nMAIN_READS_TOTAL= 1 RESOLVED= 1 UNRESOLVED= 0\n=== stage 6b: read validation, functions ===\nFN_READS_TOTAL= 1 RESOLVED= 1 UNRESOLVED= 0",
+      "ran": true,
+      "run_rc": 1,
+      "run_out": "[ERR :code 502 :kind RUNTIME :msg DIVISION_BY_ZERO]",
+      "silent_suspect": false,
+      "run_err": [
+        502,
+        "RUNTIME",
+        "DIVISION_BY_ZERO"
+      ]
+    }
+  },
+  {
+    "task_id": 34,
+    "file": "t34_bad_record_field.aic",
+    "expect": "CODEGEN UNRESOLVED_RECORD_FIELD (403)",
+    "verdict": "MATCH - correct typed error fired",
+    "python": {
+      "rc": 1,
+      "err": null,
+      "compiled": false,
+      "output_tail": "[ERR :code 400 :kind CODEGEN :msg \"Record 'Pt' has no field 'z'\"]"
+    },
+    "native": {
+      "rc": 0,
+      "err": [
+        403,
+        "CODEGEN",
+        "UNRESOLVED_RECORD_FIELD"
+      ],
+      "compiled": false,
+      "output_tail": "in ===\nMAIN_READS_TOTAL= 1 RESOLVED= 1 UNRESOLVED= 0\n=== stage 6b: read validation, functions ===\nFN_READS_TOTAL= 0 RESOLVED= 0 UNRESOLVED= 0\n[ERR :code 403 :kind CODEGEN :msg UNRESOLVED_RECORD_FIELD]"
+    }
+  },
+  {
+    "task_id": 35,
+    "file": "t35_unclosed_bracket.aic",
+    "expect": "PARSE UNCLOSED_BRACKET (102)",
+    "verdict": "MATCH - correct typed error fired",
+    "python": {
+      "rc": 1,
+      "err": null,
+      "compiled": false,
+      "output_tail": "[ERR :code 400 :kind CODEGEN :msg \"Unclosed '[' opened at line 1 - missing ']'\"]"
+    },
+    "native": {
+      "rc": 1,
+      "err": [
+        102,
+        "PARSE",
+        "UNCLOSED_BRACKET"
+      ],
+      "compiled": false,
+      "output_tail": "[ERR :code 102 :kind PARSE :msg UNCLOSED_BRACKET :byte 0 ]"
+    }
+  },
+  {
+    "task_id": 36,
+    "file": "t36_undefined_function_call.aic",
+    "expect": "UNSUPPORTED_STATEMENT / UNRESOLVED_EXPR_SYMBOL (401/402)",
+    "verdict": "MATCH - correct typed error fired",
+    "python": {
+      "rc": 1,
+      "err": null,
+      "compiled": false,
+      "output_tail": "[ERR :code 400 :kind CODEGEN :msg \"Line 1: op 'never_defined_fn' has no native codegen support yet in this slice\"]"
+    },
+    "native": {
+      "rc": 0,
+      "err": [
+        402,
+        "CODEGEN",
+        "UNRESOLVED_EXPR_SYMBOL"
+      ],
+      "compiled": false,
+      "output_tail": "ain ===\nMAIN_READS_TOTAL= 1 RESOLVED= 1 UNRESOLVED= 0\n=== stage 6b: read validation, functions ===\nFN_READS_TOTAL= 0 RESOLVED= 0 UNRESOLVED= 0\n[ERR :code 402 :kind CODEGEN :msg UNRESOLVED_EXPR_SYMBOL]"
+    }
+  }
+]
