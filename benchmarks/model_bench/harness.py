@@ -47,15 +47,18 @@ def log(msg):
 
 # ---------------- prompts ----------------
 FEWSHOT = '''
-# Two AIC examples:
+# Two AIC examples.
+# PRINTING RULE: [. x] prints x and ALWAYS appends exactly one newline.
+#   - A bare number on its own line = ONE argument:  [. [N value]]
+#   - Do NOT print a label word before a bare value, and do NOT embed "\\n"
+#     in the printed string (it would double the newline).
 
 [: fib [n] [D
   [? [<= n 1]
     [^ n]
     [^ [+ [fib [- n 1]] [fib [- n 2]]]]]
 ]]
-[! res [fib 10]]
-[. "Fib(10) =" res "\\n"]
+[. [N [fib 10]]]
 
 [: bubble_sort [[$ buf] len] [D
   [! i 0]

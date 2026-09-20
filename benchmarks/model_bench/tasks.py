@@ -30,45 +30,110 @@ AIC_SYSTEM = (
 "4. Bind libc operations (H, O, Z, R, K, X, N, V) to local variables with [! var [op ...]] before passing to nested expressions.\n"
 "5. S-records are defined with [:: RecordName field1 field2 ...] and constructed with [RecordName val1 val2 ...].\n"
 "6. Use lib/math.aic, lib/string.aic, lib/vec.aic, lib/map.aic, lib/json.aic, lib/arena.aic, lib/io.aic for standard functionality.\n"
+"7. The program's stdout is compared BYTE-EXACTLY against the expected output.\n"
+"   Print exactly the expected line(s), no more, no less: no labels, no extra spaces, and no extra newlines.\n"
+"   For a bare number on its own line print a SINGLE argument: [. [N value]].\n"
+"   The [. op always appends exactly one trailing newline.\n"
 )
 
-# Condition S adds this AIC background (Section 1 grammar/stdlib/ABI summary).
-AIC_SPEC_CONTEXT = (
+# Condition S adds the full AIC language reference (grammar, ops, complete stdlib,
+# ABI rule, and the byte-exact output rule) so the model starts from the same
+# knowledge baseline a C/Python model has from training.
+AIC_SPEC_CONTEXT = """
+AIC LANGUAGE REFERENCE (complete):
+
+TYPES: INT = 64-bit signed integer; STR = string/pointer; S-Record = fixed-size
+struct (N 8-byte fields).
+
+GRAMMAR (S-expression prefix, every expression bracketed):
+- Assign: [! var value]
+- Return from function: [^ value]
+- If: [? cond then else] (else optional when used as a statement)
+- While: [W cond body...]   (cond is an expression, body is statements)
+- Do-block: [D stmt...]
+- Bounded loop (i = 0..count-1): [@> count [i] body...]
+- Print: [. arg1 arg2 ...]  -> prints args space-joined, then ONE newline.
+- Function: [: name [param1 param2] [D body...]]
+  For a string/pointer return value: [: [$ name] [params] [D body...]]
+
+ARITHMETIC / COMPARISON / BITWISE (exactly these operators exist — do NOT
+invent others like mod, sqrt, //, ++; use the stdlib for the rest):
+- Integer math: [+ a b] [- a b] [* a b] [/ a b]  (truncating int division)
+  [% a b]  (modulo/remainder)
+- Comparison: [== a b] [!= a b] [< a b] [> a b] [<= a b] [>= a b]  (all return 0/1)
+- Bitwise: [& a b] [| a b] [^^ a b]  (AND, OR, XOR)
+- Shifts: [<< a b]  (a left by b)   [>> a b]  (a right by b)
+- Unary: [~ a]  (bitwise not)
+- Logical: [&& a b] [|| a b]
+- Ternary: [? cond a b]  -> a if cond else b (as a value)
+
+MEMORY / BYTE / WORD OPS (on a heap buffer from [H n], or a record):
+- [H n]  -> STR  (heap-allocate n+1 zeroed bytes, returns pointer)
+- [F ptr] -> INT  (free)
+- Byte ops (index is in BYTES, stores low 8 bits):
+  [@ buf idx] read,  [@! buf idx val] write
+- Word ops (index is in 8-BYTE WORDS):
+  [@@ buf idx] read,  [@@! buf idx val] write
+- Pointer word ops:
+  [@@$ buf idx] read a pointer,  [@@$! buf idx ptr] write a pointer
+
+S-RECORDS:
+- Declare: [:: Name field1 field2 ...]
+- Construct: [! p [Name v1 v2 ...]]   (auto-allocated; returns pointer)
+- Field get: [@@.Name:field p]
+- Field set: [@@!.Name:field p val]
+- Bulk set: [@@!.Name p v1 v2 ...]
+- Pointer field read back: [@@$.Name:field p]
+
+SYSTEM INTRINSICS (all libc-bound; each MUST be bound to a local [! var [...]]
+BEFORE use as a nested argument — see ABI RULE):
+- [N int] -> STR      int to decimal string
+- [V str] -> INT      decimal string to int (ONE string; not a list)
+- [L str] -> INT      string length
+- [I prompt] -> STR   read a line from stdin, return it as STR (use [I ""] for no prompt)
+- [T] -> INT          monotonic millisecond timestamp
+- [A idx] -> STR      command-line arg idx (0 = program path)
+- [O path mode] -> INT  file handle (mode like "r")
+- [Z handle] -> INT     file size in bytes
+- [R handle len] -> STR  read len bytes into a new buffer
+- [K handle buf len] -> INT  write len bytes
+- [X handle] -> INT    close file
+
+ABI RULE (critical): a libc-bound op (H,F,I,T,L,N,V,A,O,Z,R,K,X) nested directly
+inside another op breaks stack alignment. ALWAYS bind first:
+  [! sz [Z h]]  [! buf [R h sz]]       // CORRECT
+  [! buf [R h [Z h]]]                   // PROHIBITED
+
+STANDARD LIBRARY (import at top with [import "lib/X.aic"]). These are the ONLY
+stdlib functions; do not invent others.
+- lib/string.aic: str_len, str_char_at s i, str_eq s1 s2 (0/1), str_cmp s1 s2,
+  str_cat s1 s2, str_find s ch, str_starts_with s prefix (0/1),
+  str_ends_with s suffix (0/1), str_from_int n, str_to_int s, str_quote
+- lib/math.aic: math_abs, math_min a b, math_max a b, math_clamp x lo hi,
+  math_pow base exp, math_gcd a b, math_lcm a b, math_sqrt n
+- lib/vec.aic: vec_new cap, vec_len v, vec_cap v, vec_get v i, vec_set v i x,
+  vec_push v x, vec_pop v, vec_get_ptr v i, vec_set_ptr v i p, vec_push_ptr v p,
+  vec_pop_ptr v
+- lib/map.aic: map_new cap, map_len m, map_get m key, map_contains m key (0/1),
+  map_set m key val, map_keys m, map_values m, map_get_ptr, map_set_ptr
+- lib/json.aic: json_null, json_bool b, json_int n, json_str s, json_arr, json_obj,
+  json_parse s, json_stringify v, json_tag v, json_get_int v, json_get_bool v,
+  json_get_str v, json_arr_push arr v, json_arr_get arr i, json_arr_len arr,
+  json_obj_set o k v, json_obj_get o k, json_obj_contains o k (0/1)
+- lib/arena.aic: arena_new cap, arena_buffer a, arena_offset a, arena_cap a,
+  arena_alloc a bytes, arena_alloc_words a n, arena_reset a, arena_used a,
+  arena_remaining a
+- lib/io.aic: io_read_file path, io_write_file path content, io_append_file path
+  content, io_file_size path, io_file_exists path (0/1), io_read_line prompt
+
+OUTPUT RULE (byte-exact): stdout is compared byte-for-byte to the expected output.
+- A bare number on its own line: [. [N value]]  (ONE argument; the [N -> STR,
+  and [. appends the single newline). Do NOT add a label word and do NOT embed "\\n".
+- A single line with several space-separated values: build one string and print it,
+  e.g. [! line [str_cat [str_cat [str_cat [N a] " "] [N b]] " "]]  then  [. [str_cat line [N c]]].
+- Never print a word like "Fib(10) =" before a value unless the expected output
+  literally contains that word.
 """
-AIC background (grammar, stdlib, ABI):
-- Types: 64-bit INT, STR (string/pointer), fixed-size S-records.
-- If: [? cond then else?] (else optional as a statement; required as a value).
-  While: [W cond body...] (loop condition, then a [D ...] body block).
-  Do-block: [D stmt...].
-- Bounded loop: [@> count [i] body...] (i = 0..count-1).
-- Byte ops (index=bytes, stores low 8 bits): [@ buf idx] read, [@! buf idx val] write.
-- Word ops (index=8-byte words): [@@ buf idx] read, [@@! buf idx val] write.
-  Pointer word ops: [@@$ buf idx], [@@$! buf idx val].
-- Records: [:: Name f1 f2 ...] declares; [Name v1 v2] constructs;
-  [@@.Name:field p] gets; [@@!.Name:field p val] sets; [@@!.Name p v1 v2] bulk-sets.
-  A record field may hold a pointer to another record (use [@@$.Name:field p] to read it back).
-- Printing: [. "text" var "more"] prints its args. Prefer building a line as
-  one string with N / str_cat and printing that single value.
-- Input: [I "prompt"] reads one whitespace token from stdin and returns a STR
-  (use [I ""] to print no prompt). Convert to INT with [V s] before arithmetic.
-- Standard library (import with [import "lib/X.aic"]):
-  * lib/string.aic: str_len, str_char_at, str_eq, str_cmp, str_cat, str_find,
-    str_starts_with, str_ends_with, str_from_int, str_to_int.
-  * lib/vec.aic: vec_new, vec_len, vec_cap, vec_get, vec_set, vec_push, vec_pop.
-  * lib/map.aic: map_new, map_len, map_set, map_get, map_contains, map_keys,
-    map_values.
-  * lib/json.aic: json_null/bool/int/str/arr/obj constructors, json_parse,
-    json_stringify, json_tag, json_get_int, json_get_str, json_arr_push,
-    json_arr_get, json_arr_len, json_obj_set, json_obj_get, json_obj_contains.
-  * lib/arena.aic: arena_new, arena_buffer, arena_offset, arena_cap,
-    arena_alloc, arena_alloc_words, arena_reset, arena_used, arena_remaining.
-  * lib/io.aic: io_read_file, io_write_file, io_append_file, io_file_size, io_file_exists.
-- IMPORTANT ABI RULE: libc-bound ops (H, L, N, V, O, Z, R, K, X, A, I, F) MUST
-  be bound to a local variable with [! var [op ...]] BEFORE being used as an
-  argument to another call. Nesting one of these directly inside another
-  expression (e.g. [! buf [R h [Z h]]]) is UNDEFINED and breaks stack
-  alignment. Always: [! sz [Z h]] [! buf [R h sz]].
-""")
 
 # Fixed inputs for file/stdin tasks.
 FIXED_FILE = "bench_in.txt"
