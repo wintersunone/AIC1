@@ -1,24 +1,24 @@
 {
   "language_pass@1": {
-    "aic": 0.0,
-    "c": 1.0,
-    "python": 1.0
+    "aic": 0.0033333333333333335,
+    "c": 0.8733333333333332,
+    "python": 0.9433333333333334
   },
   "language_silent_wrong": {
-    "aic": 1.0,
-    "c": 0.0,
-    "python": 0.05714285714285714
+    "aic": 0.3166666666666666,
+    "c": 0.0033333333333333335,
+    "python": 0.006666666666666667
   },
   "aic_zero_shot": 0.0,
-  "aic_spec_in_context": 0.0,
+  "aic_spec_in_context": 0.006666666666666667,
   "pass_agg": {
     "1/aic/zero_shot": [
       0.0,
-      2
+      8
     ],
     "1/aic/spec_in_context": [
       0.0,
-      2
+      8
     ],
     "1/c/zero_shot": [
       1.0,
@@ -29,94 +29,94 @@
       8
     ],
     "1/python/zero_shot": [
-      1.0,
+      0.975,
       8
     ],
     "1/python/spec_in_context": [
-      1.0,
+      0.975,
       8
     ],
     "2/aic/zero_shot": [
       0.0,
-      0
+      8
     ],
     "2/aic/spec_in_context": [
       0.0,
-      2
+      8
     ],
     "2/c/zero_shot": [
-      1.0,
-      7
+      0.975,
+      8
     ],
     "2/c/spec_in_context": [
-      1.0,
-      7
+      0.975,
+      8
     ],
     "2/python/zero_shot": [
       1.0,
-      7
+      8
     ],
     "2/python/spec_in_context": [
-      1.0,
-      7
+      0.95,
+      8
     ],
     "3/aic/zero_shot": [
       0.0,
-      0
+      8
     ],
     "3/aic/spec_in_context": [
-      0.0,
-      1
+      0.025,
+      8
     ],
     "3/c/zero_shot": [
-      0.0,
-      0
+      0.55,
+      8
     ],
     "3/c/spec_in_context": [
-      0.0,
-      0
+      0.575,
+      8
     ],
     "3/python/zero_shot": [
-      1.0,
-      2
+      0.7999999999999999,
+      8
     ],
     "3/python/spec_in_context": [
-      1.0,
-      3
+      0.875,
+      8
     ],
     "4/aic/zero_shot": [
       0.0,
-      0
+      6
     ],
     "4/aic/spec_in_context": [
       0.0,
-      0
+      6
     ],
     "4/c/zero_shot": [
-      0.0,
-      0
+      0.9666666666666667,
+      6
     ],
     "4/c/spec_in_context": [
-      0.0,
-      0
+      1.0,
+      6
     ],
     "4/python/zero_shot": [
-      0.0,
-      0
+      1.0,
+      6
     ],
     "4/python/spec_in_context": [
-      0.0,
-      0
+      1.0,
+      6
     ]
   },
   "silent_agg": {
     "1/aic/zero_shot": [
-      1.0,
-      2
+      0.725,
+      8
     ],
     "1/aic/spec_in_context": [
-      1.0,
-      2
+      0.5,
+      8
     ],
     "1/c/zero_shot": [
       0.0,
@@ -127,103 +127,99 @@
       8
     ],
     "1/python/zero_shot": [
-      0.125,
+      0.025,
       8
     ],
     "1/python/spec_in_context": [
-      0.125,
+      0.025,
       8
     ],
     "2/aic/zero_shot": [
-      0.0,
-      0
+      0.125,
+      8
     ],
     "2/aic/spec_in_context": [
-      1.0,
-      2
+      0.3,
+      8
     ],
     "2/c/zero_shot": [
       0.0,
-      7
+      8
     ],
     "2/c/spec_in_context": [
       0.0,
-      7
+      8
     ],
     "2/python/zero_shot": [
       0.0,
-      7
+      8
     ],
     "2/python/spec_in_context": [
       0.0,
-      7
+      8
     ],
     "3/aic/zero_shot": [
-      0.0,
-      0
+      0.025,
+      8
     ],
     "3/aic/spec_in_context": [
-      1.0,
-      1
+      0.2,
+      8
     ],
     "3/c/zero_shot": [
       0.0,
-      0
+      8
     ],
     "3/c/spec_in_context": [
-      0.0,
-      0
+      0.025,
+      8
     ],
     "3/python/zero_shot": [
       0.0,
-      2
+      8
     ],
     "3/python/spec_in_context": [
       0.0,
-      3
+      8
     ],
     "4/aic/zero_shot": [
-      0.0,
-      0
+      0.06666666666666667,
+      6
     ],
     "4/aic/spec_in_context": [
-      0.0,
-      0
+      0.6,
+      6
     ],
     "4/c/zero_shot": [
       0.0,
-      0
+      6
     ],
     "4/c/spec_in_context": [
       0.0,
-      0
+      6
     ],
     "4/python/zero_shot": [
       0.0,
-      0
+      6
     ],
     "4/python/spec_in_context": [
       0.0,
-      0
+      6
     ]
   },
   "aic_error_categories": {
-    "none": 16,
-    "PARSE": 1
+    "none": 95,
+    "CODEGEN": 141,
+    "PARSE": 6,
+    "RUNTIME": 33,
+    "SEMANTIC": 24
   },
-  "llm_failed_total": 407,
-  "llm_failed_by": {
-    "aic/spec_in_context": 108,
-    "aic/zero_shot": 115,
-    "c/zero_shot": 59,
-    "python/zero_shot": 38,
-    "python/spec_in_context": 40,
-    "c/spec_in_context": 47
-  },
+  "llm_failed_total": 0,
+  "llm_failed_by": {},
   "aic_failure_decomposition": {
-    "format_only": 16,
-    "value_differs": 0,
-    "compile_runtime_error": 1,
-    "total_nonpass": 17
+    "format_only": 53,
+    "value_differs": 42,
+    "compile_runtime_error": 204,
+    "total_nonpass": 299
   }
 }

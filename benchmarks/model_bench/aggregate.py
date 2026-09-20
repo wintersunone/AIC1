@@ -58,18 +58,18 @@ def main():
     # pass@1 per (task,lang,cond) = mean over samples
     cell_pass = {}
     for k, rs in cell.items():
-        cell_pass[k] = mean([1 for r in rs if r["passed_functional_test"]])
+        # pass@1 = mean pass rate over the k samples in this cell.
+        # (mean([1 for r in rs if passed]) would be 1.0 if ANY sample passed —
+        #  that's any-pass@k, not the spec's mean-pass@1.)
+        cell_pass[k] = mean([1 if r["passed_functional_test"] else 0 for r in rs])
+
+    task_tier = {r["task_id"]: r["tier"] for r in recs}
 
     def agg(pred):
         t = {}
         for tier in tiers:
             for lang in langs:
                 for cond in conds:
-                    vals = [cell_pass[(tid, lang, cond)]
-                            for (tid, l, c) in cell_pass
-                            if l == lang and c == cond]
-                    # filter to this tier
-                    task_tier = {r["task_id"]: r["tier"] for r in recs}
                     vals = [cell_pass[(tid, lang, cond)]
                             for (tid, l, c) in cell_pass
                             if l == lang and c == cond and task_tier[tid] == tier]
@@ -79,7 +79,7 @@ def main():
     pass_agg = agg(lambda r: r["passed_functional_test"])
 
     # silent-wrong per (task,lang,cond) = fraction of samples silent_wrong_output
-    cell_silent = {k: mean([1 for r in rs if r["silent_wrong_output"]]) for k, rs in cell.items()}
+    cell_silent = {k: mean([1 if r["silent_wrong_output"] else 0 for r in rs]) for k, rs in cell.items()}
     silent_agg = {}
     task_tier = {r["task_id"]: r["tier"] for r in recs}
     for tier in tiers:

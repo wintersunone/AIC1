@@ -30,7 +30,7 @@ BASE_URL = os.environ.get("AIC_BENCH_BASE", "http://100.124.137.82:8888").rstrip
 API_KEY = os.environ.get("AIC_BENCH_API_KEY", "")
 TEMPERATURE = 0.7
 MAX_TOKENS = 8000
-LLM_TIMEOUT = 360          # per chat/completions call — model is slow-reasoning (AIC ~150-400s)
+LLM_TIMEOUT = 240          # per chat/completions call — endpoint serializes; keep short so wedges recover
 RUN_TIMEOUT = 5            # candidate run (catch infinite loops)
 BUILD_TIMEOUT = 90         # candidate build/compile
 LLM_RETRIES = 3
@@ -105,6 +105,13 @@ def chat(system, user, model=MODEL):
         ],
         "temperature": TEMPERATURE,
         "max_tokens": MAX_TOKENS,
+        # This endpoint's reasoning model is slow with thinking ON (~150-400s/call
+        # for AIC prompts), which makes 900 generations infeasible and causes
+        # queue-timeouts. Thinking is disabled uniformly for EVERY cell (all
+        # languages and conditions) so the comparison stays fair; documented as
+        # a limitation in the report. chat_template_kwargs is the knob this
+        # sglang build honors (top-level enable_thinking is ignored by it).
+        "chat_template_kwargs": {"enable_thinking": False},
         "enable_thinking": False,
     }
     if API_KEY:

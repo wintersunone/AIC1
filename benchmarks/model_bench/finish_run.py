@@ -30,11 +30,11 @@ def run_lang(langs, workers):
     harness.log(f"[{langstr}] done in {(time.time()-t0)/60:.0f}m")
 
 langstr = "c+py"
-run_lang(("c", "python"), 4)
+run_lang(("c", "python"), 6)
 
-# now AIC (GPU is free of C/Python load -> faster AIC calls)
+# now AIC (thinking off -> fast calls; still keep a separate, modest lane)
 done = harness.completed_cells()
 langstr = "aic"
-run_lang(("aic",), 2)
+run_lang(("aic",), 4)
 
 harness.log("ALL DONE")
