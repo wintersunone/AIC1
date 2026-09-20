@@ -1,0 +1,42 @@
+[
+ {
+  "task_id": 1,
+  "raw_response": "[: fact [n] [D\n  [? [<= n 1]\n    [^ 1]\n    [^ [* n [fact [- n 1]]]]]\n]]\n[! res [fact 10]]\n[. \"Factorial(10) =\" res \"\\n\"]",
+  "extracted_code": "[: fact [n] [D\n  [? [<= n 1]\n    [^ 1]\n    [^ [* n [fact [- n 1]]]]]\n]]\n[! res [fact 10]]\n[. \"Factorial(10) =\" res \"\\n\"]\n",
+  "raw_len": 120,
+  "code_len": 121,
+  "llm_error": false
+ },
+ {
+  "task_id": 2,
+  "raw_response": "[: fib_iter [n] [D\n  [! a 0]\n  [! b 1]\n  [! i 1]\n  [W [<= i n] [D\n    [! tmp [+ a b]]\n    [! a b]\n    [! b tmp]\n    [! i [+ i 1]]\n  ]]\n  [^ a]\n]]\n[! res [fib_iter 25]]\n[. \"Fib(25) =\" res \"\\n\"]",
+  "extracted_code": "[: fib_iter [n] [D\n  [! a 0]\n  [! b 1]\n  [! i 1]\n  [W [<= i n] [D\n    [! tmp [+ a b]]\n    [! a b]\n    [! b tmp]\n    [! i [+ i 1]]\n  ]]\n  [^ a]\n]]\n[! res [fib_iter 25]]\n[. \"Fib(25) =\" res \"\\n\"]\n",
+  "raw_len": 192,
+  "code_len": 193,
+  "llm_error": false
+ },
+ {
+  "task_id": 3,
+  "raw_response": "[: is_prime [n] [D\n  [? [<= n 1] [^ 0]\n    [^ 1]]\n  [! i 2]\n  [W [< i n] [D\n    [? [= 0 [% n i]] [^ 0]]\n    [! i [+ i 1]]\n  ]]\n  [^ 1]\n]]\n\n[. \"1\" [is_prime 1] \"\\n\"]\n[. \"2\" [is_prime 2] \"\\n\"]\n[. \"13\" [is_prime 13] \"\\n\"]\n[. \"15\" [is_prime 15] \"\\n\"]\n[. \"97\" [is_prime 97] \"\\n\"]",
+  "extracted_code": "[: is_prime [n] [D\n  [? [<= n 1] [^ 0]\n    [^ 1]]\n  [! i 2]\n  [W [< i n] [D\n    [? [= 0 [% n i]] [^ 0]]\n    [! i [+ i 1]]\n  ]]\n  [^ 1]\n]]\n\n[. \"1\" [is_prime 1] \"\\n\"]\n[. \"2\" [is_prime 2] \"\\n\"]\n[. \"13\" [is_prime 13] \"\\n\"]\n[. \"15\" [is_prime 15] \"\\n\"]\n[. \"97\" [is_prime 97] \"\\n\"]\n",
+  "raw_len": 274,
+  "code_len": 275,
+  "llm_error": false
+ },
+ {
+  "task_id": 4,
+  "raw_response": "```aic\n[: gcd [a b] [D\n  [W [!= b 0] [D\n    [! t b]\n    [! b [mod a b]]\n    [! a t]\n  ]]\n  [^ a]\n]]\n\n[! res [gcd 48 36]]\n[. \"gcd(48, 36) =\" res \"\\n\"]\n```",
+  "extracted_code": "[: gcd [a b] [D\n  [W [!= b 0] [D\n    [! t b]\n    [! b [mod a b]]\n    [! a t]\n  ]]\n  [^ a]\n]]\n\n[! res [gcd 48 36]]\n[. \"gcd(48, 36) =\" res \"\\n\"]\n",
+  "raw_len": 153,
+  "code_len": 143,
+  "llm_error": false
+ },
+ {
+  "task_id": 5,
+  "raw_response": "[: sum_digits [n] [D\n  [! s 0]\n  [W [> n 0] [D\n    [! s [+ s [% n 10]]]\n    [! n [// n 10]]\n  ]]\n  [^ s]\n]]\n[! r [sum_digits 987654321]]\n[. \"\" r \"\\n\"]",
+  "extracted_code": "[: sum_digits [n] [D\n  [! s 0]\n  [W [> n 0] [D\n    [! s [+ s [% n 10]]]\n    [! n [// n 10]]\n  ]]\n  [^ s]\n]]\n[! r [sum_digits 987654321]]\n[. \"\" r \"\\n\"]\n",
+  "raw_len": 150,
+  "code_len": 151,
+  "llm_error": false
+ }
+]
