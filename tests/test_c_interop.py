@@ -65,6 +65,10 @@ def verify_via_ctypes(so_path):
     lib.add_numbers.restype = ctypes.c_int64
     assert lib.fib(10) == 55, f"Expected 55, got {lib.fib(10)}"
     assert lib.add_numbers(2, 40) == 42, f"Expected 42, got {lib.add_numbers(2, 40)}"
+    # Windows keeps a .dll file-locked until the module is freed; release it so
+    # the caller's temporary directory can be cleaned up.
+    if sys.platform == "win32":
+        ctypes.windll.kernel32.FreeLibrary(lib._handle)
 
 
 def verify_via_dlopen_harness(so_path, workdir):

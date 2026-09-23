@@ -802,6 +802,10 @@ _DllMainCRTStartup:
     for lbl in list(asm.labels):
         if lbl.startswith('aicfn_'):
             exports[lbl[6:]] = lbl
+    # Windows GetProcAddress binary-searches AddressOfNames, so the name
+    # pointer table (and the ordinal table it maps into the EAT) must be in
+    # lexicographic order. EAT stays index-ordered; EOT carries the mapping.
+    exports = {pub: exports[pub] for pub in sorted(exports)}
     dll_name = os.path.basename(output_dll_path)
     n = len(exports)
     # The export blob (IMAGE_EXPORT_DIRECTORY + EAT + ENPT + EOT + strings) is
