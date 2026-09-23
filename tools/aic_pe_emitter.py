@@ -419,6 +419,10 @@ class Assembler:
                 dst = op2[1]
                 return self.encode_reg_mem(0x8B, dst, mem, current_offset, w=1)
 
+        if m == 'movl' and ops[0][0] == 'imm' and ops[1][0] == 'reg32':
+            # movl $imm32, %eax-class  (0xB8+reg, 32-bit imm)
+            return bytes([0xB8 + (ops[1][1] & 7)]) + struct.pack('<i', ops[0][1])
+
         raise ValueError(f"Unhandled instruction encoding: {m} with operands {ops}")
 
     def encode_reg_mem(self, opcode, reg_num, mem, current_offset, w=1, trailing_imm=b'', prefix=b''):
@@ -712,7 +716,170 @@ def build_standalone_pe(asm_text, output_exe_path):
         f.write(pe_data)
     print(f"Direct executable generated: {output_exe_path} ({len(pe_data):,} bytes)")
 
-def build_pe_file(text_bytes, rdata_bytes, data_bytes, imports, entry_point_rva=0x1000):
+def build_standalone_dll(asm_text, output_dll_path):
+    """Emit a PE32+ DLL (.dll) from AIC assembly, zero external deps.
+    Exports every aicfn_* function under its public C name."""
+    entry_asm = """
+    .text
+    .globl _DllMainCRTStartup
+_DllMainCRTStartup:
+    movl    $1, %eax
+    ret
+"""
+    full_asm = asm_text + "\n" + entry_asm
+    asm = Assembler()
+    asm.assemble(full_asm)
+
+    imports = {
+        'msvcrt.dll': [
+            'printf', 'malloc', 'calloc', 'free', 'strlen', 'strtoll',
+            'fopen', 'fclose', 'fread', 'fwrite', 'fseek', 'ftell',
+            'sprintf', 'exit', 'clock', 'fflush', 'scanf'
+        ],
+        'kernel32.dll': ['ExitProcess', 'GetCommandLineA']
+    }
+    stubs = bytearray()
+    stub_symbols = {}
+    for dll, fns in imports.items():
+        for fn in fns:
+            stub_offset = len(asm.sections['.text']) + len(stubs)
+            stub_symbols[fn] = stub_offset
+            asm.labels[fn] = ('.text', stub_offset)
+            stubs.extend(b'\xFF\x25\x00\x00\x00\x00')
+    asm.sections['.text'].extend(stubs)
+
+    sec_align = 0x1000
+    file_align = 0x200
+    image_base = 0x140000000
+    text_rva = 0x1000
+    rdata_rva = text_rva + align_up(len(asm.sections['.text']), sec_align)
+
+    iat_slots = {}
+    rdata_imports = bytearray()
+    total_iat_qwords = sum(len(fns) + 1 for fns in imports.values())
+    iat_size = total_iat_qwords * 8
+    ilt_size = iat_size
+    idt_size = (len(imports) + 1) * 20
+    strings_offset = iat_size + ilt_size + idt_size
+    rdata_imports.extend(b'\0' * strings_offset)
+    cur_iat = 0
+    cur_ilt = iat_size
+    cur_idt = iat_size + ilt_size
+    cur_str = strings_offset
+    for dll, fns in imports.items():
+        dll_name_str = dll.encode('ascii') + b'\0'
+        dll_name_off = cur_str
+        rdata_imports.extend(dll_name_str)
+        cur_str += len(dll_name_str)
+        dll_iat_start = cur_iat
+        dll_ilt_start = cur_ilt
+        symbol_aliases = {'strtoll': '_strtoi64'}
+        for fn in fns:
+            dll_sym = symbol_aliases.get(fn, fn)
+            hn = struct.pack('<H', 0) + dll_sym.encode('ascii') + b'\0'
+            if len(hn) % 2 != 0:
+                hn += b'\0'
+            hn_off = cur_str
+            rdata_imports.extend(hn)
+            cur_str += len(hn)
+            hn_rva = rdata_rva + hn_off
+            struct.pack_into('<Q', rdata_imports, cur_iat, hn_rva)
+            struct.pack_into('<Q', rdata_imports, cur_ilt, hn_rva)
+            iat_slots[fn] = rdata_rva + cur_iat
+            cur_iat += 8
+            cur_ilt += 8
+        struct.pack_into('<Q', rdata_imports, cur_iat, 0)
+        struct.pack_into('<Q', rdata_imports, cur_ilt, 0)
+        cur_iat += 8
+        cur_ilt += 8
+        struct.pack_into('<IIIII', rdata_imports, cur_idt,
+                         rdata_rva + dll_ilt_start, 0, 0,
+                         rdata_rva + dll_name_off, rdata_rva + dll_iat_start)
+        cur_idt += 20
+
+    # --- Export directory (slot 0) ------------------------------------------
+    exports = {}
+    for lbl in list(asm.labels):
+        if lbl.startswith('aicfn_'):
+            exports[lbl[6:]] = lbl
+    dll_name = os.path.basename(output_dll_path)
+    n = len(exports)
+    # The export blob (IMAGE_EXPORT_DIRECTORY + EAT + ENPT + EOT + strings) is
+    # appended to the end of .rdata; all its RVAs are relative to exp_base.
+    rodata_start_in_rdata = len(rdata_imports)
+    for lbl, (sec, off) in list(asm.labels.items()):
+        if sec == '.rodata':
+            asm.labels[lbl] = ('.rdata', rodata_start_in_rdata + off)
+    rdata_bytes = rdata_imports + asm.sections['.rodata']
+    exp_base = rdata_rva + len(rdata_bytes)
+
+    def build_exp(base):
+        e = bytearray()
+        e.extend(b'\0' * 40)               # IMAGE_EXPORT_DIRECTORY (patched)
+        eat = 40
+        enpt = eat + 4 * n                 # EAT
+        eot = enpt + 4 * n                 # ENPT
+        s0 = eot + 2 * n                   # EOT, then name strings
+        blob = b''
+        name_rvas2 = {}
+        for pub in exports:
+            name_rvas2[pub] = base + s0 + len(blob)
+            blob += pub.encode('ascii') + b'\0'
+        dn = len(blob)                     # dll-name string offset within blob
+        blob += dll_name.encode('ascii') + b'\0'
+        # EAT: n RVAs to exported function code in .text
+        for pub, mangled in exports.items():
+            e += struct.pack('<I', text_rva + asm.labels[mangled][1])
+        # ENPT: n RVAs to name strings
+        for pub in exports:
+            e += struct.pack('<I', name_rvas2[pub])
+        # EOT: n 16-bit ordinals
+        for i in range(n):
+            e += struct.pack('<H', i)
+        e += blob
+        struct.pack_into('<IIHHIIIIIII', e, 0,   # fill the 40-byte header
+                         0, 0, 0, 0,             # Characteristics, stamp, ver
+                         base + s0 + dn,         # Name (dll_name string)
+                         1, n, n,                # Base, NumFuncs, NumNames
+                         base + eat, base + enpt, base + eot)
+        return e
+    exp2 = build_exp(exp_base)
+    rdata_bytes = rdata_imports + asm.sections['.rodata'] + exp2
+    export_dir = {'rva': exp_base, 'size': len(exp2)}
+
+    data_rva = rdata_rva + align_up(len(rdata_bytes), sec_align)
+    for fn, stub_off in stub_symbols.items():
+        iat_target_rva = iat_slots[fn]
+        next_ip_rva = text_rva + stub_off + 6
+        rel32 = iat_target_rva - next_ip_rva
+        struct.pack_into('<i', asm.sections['.text'], stub_off + 2, rel32)
+    sec_rvas = {
+        '.text': text_rva, '.rdata': rdata_rva, '.rodata': rdata_rva, '.data': data_rva
+    }
+    for fix_off, target, ftype, addend in asm.text_fixups:
+        if target not in asm.labels:
+            raise ValueError(f"Undefined symbol during PE DLL link: {target}")
+        t_sec, t_off = asm.labels[target]
+        target_rva = sec_rvas[t_sec] + t_off
+        current_ip_rva = text_rva + fix_off + 4
+        rel32 = (target_rva - current_ip_rva) + (addend + 4)
+        struct.pack_into('<i', asm.sections['.text'], fix_off, rel32)
+    entry_point_rva = text_rva + asm.labels['_DllMainCRTStartup'][1]
+    imports_info = {
+        'import_table': (rdata_rva + iat_size + ilt_size, idt_size),
+        'iat': (rdata_rva, iat_size)
+    }
+    pe_data = build_pe_file(
+        asm.sections['.text'], rdata_bytes, asm.sections['.data'], imports_info,
+        entry_point_rva=entry_point_rva, characteristics=0x2022, export_dir=export_dir
+    )
+    with open(output_dll_path, 'wb') as f:
+        f.write(pe_data)
+    print(f"Direct PE32+ DLL generated: {output_dll_path} ({len(pe_data):,} bytes, {n} exports)")
+
+
+def build_pe_file(text_bytes, rdata_bytes, data_bytes, imports, entry_point_rva=0x1000,
+                  characteristics=0x0022, export_dir=None):
     sec_align = 0x1000
     file_align = 0x200
     image_base = 0x140000000
@@ -755,7 +922,7 @@ def build_pe_file(text_bytes, rdata_bytes, data_bytes, imports, entry_point_rva=
         0,
         0,
         240,
-        0x0022
+        characteristics
     )
 
     opt_header = struct.pack(
@@ -788,10 +955,15 @@ def build_pe_file(text_bytes, rdata_bytes, data_bytes, imports, entry_point_rva=
     )
 
     data_dirs = bytearray(128)
+    # opt_header is exactly 112 bytes (PE32+ standard+windows fields), so the
+    # data directories immediately follow at opt+112. 112 + 128 = 240 =
+    # SizeOfOptionalHeader. (Verified against the known-good aic.exe.)
     import_rva, import_size = imports.get('import_table', (0, 0))
     struct.pack_into('<II', data_dirs, 1 * 8, import_rva, import_size)
     iat_rva, iat_size = imports.get('iat', (0, 0))
     struct.pack_into('<II', data_dirs, 12 * 8, iat_rva, iat_size)
+    if export_dir:
+        struct.pack_into('<II', data_dirs, 0 * 8, export_dir['rva'], export_dir['size'])
 
     def sec_hdr(name, v_size, v_addr, raw_size, raw_ptr, chars):
         name_bytes = name.encode('ascii')[:8].ljust(8, b'\0')

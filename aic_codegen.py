@@ -1590,7 +1590,12 @@ aic_main:
     ret
 """
 
-    def build(self, main_stmts, main_slots, main_types):
+    def build(self, main_stmts, main_slots, main_types, bridge_file=None):
+        # ponytail: bridge_file overrides the host-ABI C-runtime bridge for the
+        # target artifact (a Linux host emitting a real PE DLL needs the WinCRT
+        # bridge). Add a third target ABI here only if macOS/Apple SysV is needed.
+        if bridge_file:
+            self._bridge_file = bridge_file
         # Codegen must run before we know which string literals were used
         # (str_labels is populated as a side effect of compile_expr).
         main_asm = self.compile_main(main_stmts, main_slots, main_types)
@@ -1636,9 +1641,14 @@ runtimeerr_msg_end:
         # Upgrade path: emit both conventions from codegen (an ABI flag) if
         # a third target (e.g. macOS/Apple SysV) is ever needed.
         import sys as _sys
-        bridge_file = os.path.join(os.path.dirname(__file__), "tools",
-                                   "aic_wincrt_bridge.s" if _sys.platform == "win32"
-                                   else "aic_linux_bridge.s")
+        # bridge_asm is resolved in build() from the target-ABI bridge file.
+        _bridge_file_override = getattr(self, "_bridge_file", None)
+        if _bridge_file_override:
+            bridge_file = _bridge_file_override
+        else:
+            bridge_file = os.path.join(os.path.dirname(__file__), "tools",
+                                       "aic_wincrt_bridge.s" if _sys.platform == "win32"
+                                       else "aic_linux_bridge.s")
         if not os.path.exists(bridge_file):
             bridge_file = os.path.join(os.path.dirname(__file__), "tools",
                                        "aic_wincrt_bridge.s")
@@ -1695,7 +1705,7 @@ def read_source_with_imports(src_path, visited=None):
     return pattern.sub(replacer, source)
 
 
-def compile_file(src_path, asm_path):
+def compile_file(src_path, asm_path, bridge_file=None):
     source = read_source_with_imports(src_path)
     tokens, lines = tokenize(source)
     program_nodes = []
@@ -1705,7 +1715,7 @@ def compile_file(src_path, asm_path):
     analyzer = Analyzer()
     main_stmts, main_slots, main_types = analyzer.analyze(program_nodes)
     cg = Codegen(analyzer.functions, analyzer)
-    asm = cg.build(main_stmts, main_slots, main_types)
+    asm = cg.build(main_stmts, main_slots, main_types, bridge_file=bridge_file)
     with open(asm_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(asm)
     return asm

@@ -23,10 +23,20 @@ def cmd_build(args):
     if target == "auto":
         target = "pe" if sys.platform == "win32" else "elf"
 
+    fmt = getattr(args, "format", "auto")
+    if fmt == "auto":
+        fmt = "shared" if getattr(args, "header", False) else "exe"
+    if fmt == "obj":
+        print("[ERR] --format obj not implemented in Milestone 1 (emitters target exe/shared only).")
+        sys.exit(1)
+
     out_file = args.output
     if not out_file:
         base = os.path.splitext(src_file)[0]
-        out_file = f"{base}.exe" if target == "pe" else f"{base}.elf"
+        if fmt == "shared":
+            out_file = f"{base}.dll" if target == "pe" else f"lib{base}.so"
+        else:
+            out_file = f"{base}.exe" if target == "pe" else f"{base}.elf"
 
     asm_file = f"{os.path.splitext(src_file)[0]}.s"
 
@@ -38,7 +48,14 @@ def cmd_build(args):
     #    pass it as argv[3] so the native compiler's output matches this host.
     _native = "./aic.exe" if sys.platform == "win32" else "./aic.elf"
     aic_exe = _native if os.path.exists(_native) else None
-    _bridge = "tools/aic_wincrt_bridge.s" if sys.platform == "win32" else "tools/aic_linux_bridge.s"
+    # The C-runtime bridge must match the artifact's *target* ABI, not the host.
+    # A true Windows artifact (PE DLL via --format shared, or any PE on a Win
+    # host) needs the WinCRT bridge; everything else (Linux, or the cross-built
+    # "pe exe" that actually links as a static x86-64 ELF under binfmt) uses the
+    # SysV/glibc bridge. This preserves the existing host-bridge convention for
+    # exe builds while making --target pe --format shared emit a real PE DLL.
+    _win_target = target == "pe" and (sys.platform == "win32" or fmt == "shared")
+    _bridge = "tools/aic_wincrt_bridge.s" if _win_target else "tools/aic_linux_bridge.s"
     native_ok = False
     if aic_exe and not args.force_python:
         res = subprocess.run([aic_exe, src_file, asm_file, _bridge], capture_output=True, text=True)
@@ -58,13 +75,35 @@ def cmd_build(args):
     if not native_ok:
         from aic_codegen import compile_file
         try:
-            compile_file(src_file, asm_file)
+            compile_file(src_file, asm_file, bridge_file=os.path.abspath(_bridge))
         except Exception as e:
             print(f"[ERR] Host compilation failed: {e}")
             sys.exit(1)
 
     # 2. Package directly using zero-dependency emitters
-    if target == "pe":
+    if fmt == "shared":
+        # Shared objects always go through the pure-Python emitters (the
+        # zero-dep invariant); gcc/MinGW aren't used here.
+        if target == "pe":
+            import tools.aic_pe_emitter as pe_emitter
+            with open(asm_file, "r", encoding="utf-8") as f:
+                asm_content = f.read()
+            pe_emitter.build_standalone_dll(asm_content, out_file)
+            print(f"[OK] Standalone PE32+ DLL: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        elif target == "elf":
+            import tools.aic_elf_emitter as elf_emitter
+            with open(asm_file, "r", encoding="utf-8") as f:
+                asm_content = f.read()
+            elf_emitter.build_shared_elf(asm_content, out_file)
+            print(f"[OK] Standalone Linux shared ELF64: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        else:
+            print(f"[ERR] Unknown target '{target}'")
+            sys.exit(1)
+        if getattr(args, "header", False):
+            import tools.generate_header
+            header_path = os.path.splitext(out_file)[0] + ".h"
+            tools.generate_header.generate_header(src_file, header_path)
+    elif target == "pe":
         import tools.aic_pe_emitter as pe_emitter
         with open(asm_file, "r", encoding="utf-8") as f:
             asm_content = f.read()
@@ -166,7 +205,9 @@ def cmd_test(args):
             target="auto",
             force_python=False,
             keep_asm=False,
-            interp=False
+            interp=False,
+            format="auto",
+            header=False
         )
         try:
             cmd_run(cmd_args)
@@ -252,6 +293,10 @@ def main():
     p_build.add_argument("-o", "--output", help="Output binary file path")
     p_build.add_argument("--target", choices=["auto", "pe", "elf"], default="auto",
                          help="Target binary format: pe (Windows), elf (Linux), or auto (default)")
+    p_build.add_argument("--format", choices=["auto", "exe", "shared", "obj"], default="auto",
+                         help="Output form: exe (default), shared (.so/.dll), or obj (not yet)")
+    p_build.add_argument("--header", action="store_true",
+                         help="Generate a C header (.h) sidecar alongside the shared library")
     p_build.add_argument("--keep-asm", action="store_true", help="Keep intermediate .s file")
     p_build.add_argument("--force-python", action="store_true", help="Force Python compiler instead of native aic.exe")
     p_build.set_defaults(func=cmd_build)

@@ -910,6 +910,238 @@ aic_space:
     .string " "
 """
 
+def _strip_bridge(asm_content):
+    """Drop the platform C-runtime bridge (glibc/mingw shims) from a generated
+    .s so a shared object can be built against the self-contained
+    LINUX_RUNTIME_ASM (raw syscalls, no undefined libc symbols -> no PLT/GOT).
+    Everything before the bridge banner stays: the user rodata, .text, and
+    all aicfn_* functions."""
+    for marker in ("# tools/aic_linux_bridge.s", "# tools/aic_wincrt_bridge.s",
+                   "aic_win_fmt_i_nl:", "aic_win_fmt_err:"):
+        i = asm_content.find(marker)
+        if i >= 0:
+            return asm_content[:i]
+    return asm_content
+
+
+def _elf_hash(name: str) -> int:
+    h = 0
+    for ch in name.encode('ascii'):
+        h = (h << 4) + ch
+        g = h & 0xF0000000
+        if g:
+            h ^= (g >> 24)
+        h &= ~g
+    return h & 0xFFFFFFFF
+
+
+# _start and its body: a .so must not own process execution, so
+# build_shared_elf strips this block from LINUX_RUNTIME_ASM (spec Component B).
+# NOTE: starts at ".global" (no leading newline) so the .text directive's own
+# newline survives the replace.
+_START_BLOCK = """.global _start
+_start:
+    movq    (%rsp), %rdi
+    leaq    8(%rsp), %rsi
+    leaq    aic_argc(%rip), %rax
+    movq    %rdi, (%rax)
+    leaq    aic_argv(%rip), %rax
+    movq    %rsi, (%rax)
+    call    aic_init_arena
+    leaq    aic_argc(%rip), %rax
+    movq    (%rax), %rdi
+    leaq    aic_argv(%rip), %rax
+    movq    (%rax), %rsi
+    call    aic_main
+    movq    %rax, %rdi
+    movq    $60, %rax       // sys_exit
+    syscall
+
+"""
+
+def build_shared_elf(asm_content, output_path):
+    """Emit an ET_DYN (x86-64 .so) from AIC assembly, zero external deps.
+
+    Self-contained: exports every user function (aicfn_NAME) under its public
+    C name, links only against LINUX_RUNTIME_ASM (raw syscalls, _start
+    stripped), and registers a single .init_array constructor
+    (R_X86_64_RELATIVE) that mmaps the arena on dlopen.
+    No PLT/GOT needed because there are no undefined symbols.
+    """
+    user_asm = _strip_bridge(asm_content)
+    # Constructor that runs aic_init_arena once on dlopen.
+    ctor_asm = "\n.text\n" + \
+        ".global aic_ctor\n" + \
+        "aic_ctor:\n" + \
+        "    call    aic_init_arena\n" + \
+        "    ret\n"
+    runtime_asm = LINUX_RUNTIME_ASM.replace(_START_BLOCK, "")
+    full_asm = user_asm + "\n" + ctor_asm + "\n" + runtime_asm
+    asm = Assembler()
+    asm.assemble(full_asm)
+
+    exports = {}
+    for lbl in list(asm.labels):
+        if lbl.startswith("aicfn_"):
+            exports[lbl[6:]] = lbl   # public name -> mangled label
+
+    PAGE = 0x1000
+    # Layout: [ELF hdr + phdrs][.text][.rodata][.data] aligned, then dyn sections.
+    # ET_DYN with p_vaddr==p_offset (base 0), so file offset == virtual address.
+    text_off = 0x4000
+    text_bytes = asm.sections['.text']
+    rodata_bytes = asm.sections['.rodata']
+    data_bytes = asm.sections['.data']
+    rodata_off = text_off + len(text_bytes)
+    # data_off must be PAGE-aligned: the 2nd LOAD segment (RW) starts here, and
+    # the loader requires p_offset/p_vaddr page-aligned for each PT_LOAD.
+    data_off = (rodata_off + len(data_bytes) + PAGE - 1) & ~(PAGE - 1)
+
+    # init_array: one qword pointer to aic_ctor (a RELATIVE reloc target).
+    initarr_off = (data_off + len(data_bytes) + 7) & ~7
+    initarr_vaddr = initarr_off
+    initarr = struct.pack('<Q', 0)  # loader fills via the RELATIVE reloc
+    ctor_vaddr = text_off + asm.labels['aic_ctor'][1]   # base-0: file off == vaddr
+
+    # .dynstr
+    dynstr_off = (initarr_off + 8 + 7) & ~7
+    dynstr = bytearray(b'\x00')
+    name_offs = {}
+    for pub in exports:
+        name_offs[pub] = len(dynstr)
+        dynstr.extend(pub.encode('ascii'))
+        dynstr.append(0)
+    dynstr_sz = len(dynstr)
+
+    # .dynsym: entry 0 = null, then exports. st_value = vaddr (text offset).
+    dynsym_off = (dynstr_off + dynstr_sz + 7) & ~7
+    dynsym = bytearray()
+    dynsym.extend(struct.pack('<IBBHQQ', 0, 0, 0, 0, 0, 0))  # null sym
+    for pub, mangled in exports.items():
+        vaddr = text_off + asm.labels[mangled][1]   # base-0: file off == vaddr
+        # st_info = (STB_GLOBAL<<4)|STT_FUNC = 0x12; st_other (visibility) = 0.
+        dynsym.extend(struct.pack('<IBBHQQ', name_offs[pub], 0x12, 0, 1, vaddr, 0))
+    n_export = len(exports)
+    dynsym_sz = (n_export + 1) * 24
+
+    # .hash (SysV). bucket_cnt == chain_cnt == n_export+1. Chain array is
+    # indexed by dynsym index (0 = null, unused); bucket[h % n] = first sym in
+    # that bucket, chain[i] = next sym in the same bucket (0 = end).
+    hash_off = (dynsym_off + dynsym_sz + 7) & ~7
+    nhash = n_export + 1
+    bucket = [0] * nhash
+    chain = [0] * nhash   # index 0..n_export
+    for idx, pub in enumerate(exports, start=1):
+        b = _elf_hash(pub) % nhash
+        chain[idx] = bucket[b]
+        bucket[b] = idx
+    dyn_hash = bytearray()
+    dyn_hash.extend(struct.pack('<II', nhash, nhash))
+    for x in bucket:
+        dyn_hash.extend(struct.pack('<I', x))
+    for x in chain:
+        dyn_hash.extend(struct.pack('<I', x))
+    dyn_hash_sz = len(dyn_hash)
+
+    # .rela.dyn: one R_X86_64_RELATIVE for the .init_array entry.
+    # Elf64_Rela = r_offset(8) r_info(8) r_addend(8); 24 bytes.
+    # r_info = (sym_idx<<32)|type; RELATIVE uses sym 0, type 8.
+    R_X86_64_RELATIVE = 8
+    rela_off = (hash_off + dyn_hash_sz + 7) & ~7
+    rela = struct.pack('<QQQ', initarr_vaddr, R_X86_64_RELATIVE, ctor_vaddr)
+    rela_sz = len(rela)
+
+    # .dynamic
+    dynamic_off = (rela_off + rela_sz + 7) & ~7
+    DT_HASH, DT_STRTAB, DT_SYMTAB = 4, 5, 6
+    DT_RELA, DT_RELASZ, DT_RELAENT = 7, 8, 9
+    DT_STRSZ, DT_SYMENT = 10, 11
+    DT_INIT_ARRAY, DT_INIT_ARRAYSZ = 0x19, 0x1b
+    DT_NULL = 0
+    dynents = [
+        (DT_HASH, hash_off),
+        (DT_STRTAB, dynstr_off),
+        (DT_SYMTAB, dynsym_off),
+        (DT_RELA, rela_off),
+        (DT_RELASZ, rela_sz),
+        (DT_RELAENT, 24),
+        (DT_STRSZ, dynstr_sz),
+        (DT_SYMENT, 24),
+        (DT_INIT_ARRAY, initarr_vaddr),
+        (DT_INIT_ARRAYSZ, 8),
+        (DT_NULL, 0),
+    ]
+    dynamic_sz = len(dynents) * 16
+    dynamic_bytes = bytearray()
+    for tag, val in dynents:
+        dynamic_bytes.extend(struct.pack('<qQ', tag, val))
+
+    # --- Resolve internal fixups (call/jmp/leaq(%rip)) ------------------------
+    # base-0 convention: file offset == vaddr.
+    vaddr_of = {}
+    for lbl, (sec, off) in asm.labels.items():
+        if sec == '.text':
+            vaddr_of[lbl] = text_off + off
+        elif sec == '.rodata':
+            vaddr_of[lbl] = text_off + len(text_bytes) + off
+        elif sec == '.data':
+            vaddr_of[lbl] = data_off + off
+    for off, sym, _ftype, _addend in asm.text_fixups:
+        tgt = vaddr_of.get(sym)
+        if tgt is None:
+            raise ValueError(f"Unresolved symbol in shared ELF: {sym}")
+        instr_vaddr = text_off + off
+        rel32 = tgt - (instr_vaddr + 4)
+        struct.pack_into('<i', text_bytes, off, rel32)
+
+    file_size = (dynamic_off + dynamic_sz + 7) & ~7
+    # Program headers: 3x (PT_LOAD RX, PT_LOAD RW, PT_DYNAMIC)
+    phnum = 3
+    phoff = 64
+    # text_off chosen so headers fit; headers = 64 + 3*56 = 232 < 0x4000 ok.
+    phdrs = b''
+    # RX: .text + .rodata only, [text_off, data_off). p_vaddr==p_offset (base 0).
+    # CRITICAL: must END at data_off (page-aligned) — the dynamic tables and
+    # .init_array live in the RW segment below; a RELATIVE reloc write into a
+    # read-only RX mapping segfaults the loader.
+    phdrs += struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, data_off, data_off, PAGE)
+    # RW: everything from .data onward (data, init_array, dynstr, dynsym, hash,
+    # rela, dynamic). This is where the loader writes the init_array pointer.
+    phdrs += struct.pack('<IIQQQQQQ', 1, 6, data_off, data_off, data_off,
+                         file_size - data_off, file_size - data_off, PAGE)
+    phdrs += struct.pack('<IIQQQQQQ', 2, 6, dynamic_off, dynamic_off, dynamic_off,
+                         dynamic_sz, dynamic_sz, 8)
+
+    e_ident = b'\x7fELF' + bytes([2, 1, 1, 0, 0] + [0] * 9)
+    elf_header = struct.pack('<16sHHIQQQIHHHHHH',
+        e_ident, 3, 0x3E, 1, 0, phoff, 0, 0, 64, 56, phnum, 64, 0, 0)
+
+    buf = bytearray()
+    buf.extend(elf_header + phdrs)
+    buf.extend(b'\x00' * (text_off - len(buf)))
+    buf.extend(text_bytes)
+    buf.extend(rodata_bytes)
+    buf.extend(b'\x00' * (data_off - len(buf)))
+    buf.extend(data_bytes)
+    buf.extend(b'\x00' * (initarr_off - len(buf)))
+    buf.extend(initarr)
+    buf.extend(b'\x00' * (dynstr_off - len(buf)))
+    buf.extend(dynstr)
+    buf.extend(b'\x00' * (dynsym_off - len(buf)))
+    buf.extend(dynsym)
+    buf.extend(b'\x00' * (hash_off - len(buf)))
+    buf.extend(dyn_hash)
+    buf.extend(b'\x00' * (rela_off - len(buf)))
+    buf.extend(rela)
+    buf.extend(b'\x00' * (dynamic_off - len(buf)))
+    buf.extend(dynamic_bytes)
+    buf.extend(b'\x00' * (file_size - len(buf)))
+
+    with open(output_path, "wb") as f:
+        f.write(buf)
+    print(f"Direct Linux shared ELF64 (.so) generated: {output_path} ({len(buf):,} bytes, {n_export} exports)")
+
+
 def build_standalone_elf(asm_content, output_path):
     if "aic_win_fmt_i_nl:" in asm_content:
         asm_content = asm_content[:asm_content.find("aic_win_fmt_i_nl:")].rsplit(".section .rodata", 1)[0]

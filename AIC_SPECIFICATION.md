@@ -455,3 +455,11 @@ AIC compiles directly to native machine code without virtual machine interpreter
 - **Microscopic Binary Size**: Standalone PE32+ executables are ~8.7 KB with 0 external DLL dependencies beyond standard runtime imports.
 - **Zero-Latency Startup**: No runtime environment, JIT warmup phase, or interpreter initialization overhead.
 - **Direct Register Mapping**: Memory operations (`@`, `@!`, `@@`, `@@!`) compile directly into single `movb`/`movq` instructions with indexed displacement addressing modes (`(%rdi, %rcx, 1)` or `(%rdi, %rcx, 8)`).
+
+---
+
+## 11. Milestone Status
+
+| Milestone | Status | Artifacts / Proof |
+| :--- | :--- | :--- |
+| **M1 — C-ABI Interoperability Bridge** | **COMPLETE (2026-09-22)** | `--format shared --header` emits self-contained `.so` (ELF `ET_DYN`, raw-syscall runtime, zero undefined symbols, `.init_array` arena ctor, SysV `.dynsym`/`.hash`) and `.dll` (PE32+, `Characteristics=0x2022`, export directory) plus a `.h` sidecar. Emitters: `tools/aic_elf_emitter.py::build_shared_elf`, `tools/aic_pe_emitter.py::build_standalone_dll`, `tools/generate_header.py`. E2E validation: `tests/test_c_interop.py` (ctypes on x86-64 hosts; per-export dlopen/dlsym/call harness under the cross dynamic loader on other hosts). |

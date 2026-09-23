@@ -74,6 +74,23 @@ python aic.py build code.aic --target pe -o app.exe
 python aic.py build code.aic --target elf -o app.elf
 ```
 
+### 2b. Emit C-ABI Shared Libraries, DLLs & Headers (Milestone 1)
+```bash
+# Linux .so + C header sidecar (zero external symbols; arena inits on dlopen via .init_array)
+python aic.py build code.aic --format shared --header -o libalgo.so
+#   -> libalgo.so  +  libalgo.h
+
+# Windows PE32+ DLL with export directory (zero-dependency emitter)
+python aic.py build code.aic --target pe --format shared --header -o algo.dll
+#   -> algo.dll    +  algo.h
+```
+Every top-level AIC function is exported under its own name (`int64_t` args/return, SysV on Linux, x64 on Windows). Load with `ctypes.CDLL` / `LoadLibrary` + `GetProcAddress`, or compile against the generated header:
+```c
+#include "libalgo.h"
+long long f = fib(10);          /* 55 */
+```
+The `.so` is fully self-contained: raw-syscall runtime (no libc imports), one `.init_array` constructor that mmaps the arena on load, and SysV `.dynsym`/`.hash` exports. End-to-end validation: `python3 tests/test_c_interop.py`.
+
 ### 3. Run Standard Library Integration Tests
 ```bash
 python aic.py test
