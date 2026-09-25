@@ -726,7 +726,40 @@ _DllMainCRTStartup:
     movl    $1, %eax
     ret
 """
-    full_asm = asm_text + "\n" + entry_asm
+    # AIC codegen emits SysV-ABI functions (args in rdi/rsi/rdx/rcx, return
+    # in rax). The Windows x64 ABI passes args in rcx/rdx/r8/r9 and treats
+    # rbx/rbp/rsi/rdi/r12-r15 as callee-saved. Measured across the full
+    # self-hosted compiler's generated asm, AIC code clobbers rbx, rsi, rdi
+    # (general scratch); rbp is always frame-restored by AIC's own `leave`,
+    # r12-r15 are never touched. Each export therefore gets a thunk that
+    # saves the three clobbered Windows non-volatiles, maps the four arg
+    # registers (aliasing-safe order: r8->rdx before r9->rcx is fine since
+    # all four sources are read before any overlap matters), and restores.
+    # Stack alignment: both ABIs enter a callee with rsp ≡ 8 (mod 16); the
+    # odd number (3) of pushes keeps the call to aicfn_* at the ≡ 8 entry
+    # AIC's frames expect.
+    # Stack args (functions with >4 parameters) are NOT re-spilled — every
+    # function exported so far takes <=4 register args.
+    # ponytail: N>4 exports need a stack-arg re-spill loop in the thunk;
+    # add when an exported AIC function takes more than 4 parameters.
+    thunk_asm = "\n"
+    for m in re.findall(r'^aicfn_(\w+):', asm_text, re.M):
+        thunk_asm += (
+            f"\n__thunk_{m}:\n"
+            "    pushq   %rbx\n"
+            "    pushq   %rsi\n"
+            "    pushq   %rdi\n"
+            "    movq    %rcx, %rdi\n"
+            "    movq    %rdx, %rsi\n"
+            "    movq    %r8, %rdx\n"
+            "    movq    %r9, %rcx\n"
+            f"    call    aicfn_{m}\n"
+            "    popq    %rdi\n"
+            "    popq    %rsi\n"
+            "    popq    %rbx\n"
+            "    ret\n"
+        )
+    full_asm = asm_text + "\n" + entry_asm + thunk_asm
     asm = Assembler()
     asm.assemble(full_asm)
 
@@ -831,9 +864,9 @@ _DllMainCRTStartup:
             blob += pub.encode('ascii') + b'\0'
         dn = len(blob)                     # dll-name string offset within blob
         blob += dll_name.encode('ascii') + b'\0'
-        # EAT: n RVAs to exported function code in .text
+        # EAT: n RVAs to exported function code in .text (via MS-ABI thunks)
         for pub, mangled in exports.items():
-            e += struct.pack('<I', text_rva + asm.labels[mangled][1])
+            e += struct.pack('<I', text_rva + asm.labels[f'__thunk_{pub}'][1])
         # ENPT: n RVAs to name strings
         for pub in exports:
             e += struct.pack('<I', name_rvas2[pub])
