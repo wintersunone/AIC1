@@ -68,6 +68,7 @@ def verify_via_ctypes(so_path):
     # Windows keeps a .dll file-locked until the module is freed; release it so
     # the caller's temporary directory can be cleaned up.
     if sys.platform == "win32":
+        ctypes.windll.kernel32.FreeLibrary.argtypes = [ctypes.c_void_p]
         ctypes.windll.kernel32.FreeLibrary(lib._handle)
 
 
