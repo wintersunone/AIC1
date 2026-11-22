@@ -16,6 +16,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 SPEED_DIR = os.path.join(BASE_DIR, "benchmarks", "speed")
+HOST_IS_X86 = os.uname().machine in ("x86_64", "amd64") if hasattr(os, "uname") else os.environ.get("PROCESSOR_ARCHITECTURE") == "AMD64"
 
 BENCHMARKS = [
     {
@@ -355,47 +356,65 @@ def main():
 
         row = {"name": b_name}
 
-        # Build AIC
-        aic_s = os.path.join(SPEED_DIR, "bench_aic.s")
-        aic_exe = os.path.join(SPEED_DIR, "bench_aic.exe")
-        aic_compiler = os.path.join(BASE_DIR, "aic.exe")
+        # ponytail: build both optimization levels through aic.py (the single
+        # source of truth for codegen + linking) so the -O1 flag actually reaches
+        # the code generator; the old path hard-coded aic.exe + the PE emitter.
+        def build_aic(out_path, opt):
+            cmd = [sys.executable, os.path.join(BASE_DIR, "aic.py"), "build", aic_file, "-o", out_path]
+            if opt:
+                cmd.append("-O1")
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=BASE_DIR)
+            return r.returncode == 0 and os.path.exists(out_path)
 
-        res = subprocess.run([aic_compiler, aic_file, aic_s], capture_output=True, text=True, cwd=BASE_DIR)
-        if res.returncode != 0:
-            print(f"[ERR] AIC compilation error: {res.stderr}")
-            continue
+        def run_exe(path):
+            if HOST_IS_X86:
+                return measure_execution([path])
+            return measure_execution(["qemu-x86_64-static", path])
 
-        import tools.aic_pe_emitter as pe_emitter
-        with open(aic_s, "r", encoding="utf-8") as f:
-            asm_txt = f.read()
-        pe_emitter.build_standalone_pe(asm_txt, aic_exe)
+        # C is built for x86-64 as well so it crosses the same emulator, otherwise
+        # the comparison measures native-vs-emulated, not the code generators.
+        cc = "gcc" if HOST_IS_X86 else "x86_64-linux-gnu-gcc"
+        c_exe = os.path.join(SPEED_DIR, "bench_c.exe")
+        c_comp = subprocess.run([cc, "-O2", "-static", c_file, "-o", c_exe],
+                                capture_output=True, text=True)
+        has_cc = c_comp.returncode == 0
 
-        t_aic, out_aic = measure_execution([aic_exe])
-        row["AIC (Native)"] = t_aic
-        print(f"    [*] AIC (Native)   : {t_aic:.4f}s  ->  {out_aic[:80]}")
+        aic_o0 = os.path.join(SPEED_DIR, "bench_aic_O0.elf")
+        aic_o1 = os.path.join(SPEED_DIR, "bench_aic_O1.elf")
+        ok0 = build_aic(aic_o0, False)
+        ok1 = build_aic(aic_o1, True)
+
+        if ok0:
+            t0, out0 = run_exe(aic_o0)
+            row["AIC -O0"] = t0
+            print(f"    [*] AIC -O0        : {t0:.4f}s  ->  {out0[:80]}")
+        if ok1:
+            t1, out1 = run_exe(aic_o1)
+            row["AIC -O1"] = t1
+            print(f"    [*] AIC -O1        : {t1:.4f}s  ->  {out1[:80]}")
+        if ok0 and ok1 and row.get("AIC -O1", 0) > 0:
+            print(f"    [*] -O1 speedup    : {row['AIC -O0'] / row['AIC -O1']:.2f}x")
+        t_aic = row.get("AIC -O1") or row.get("AIC -O0") or 0.0
 
         # Build & Run C (GCC -O2)
-        if has_gcc:
-            c_exe = os.path.join(SPEED_DIR, "bench_c.exe")
-            c_comp = subprocess.run(["gcc", "-O2", c_file, "-o", c_exe], capture_output=True, text=True)
-            if c_comp.returncode == 0:
-                t_c, out_c = measure_execution([c_exe])
-                row["C (GCC -O2)"] = t_c
-                speedup_aic_vs_c = t_aic / t_c if t_c > 0 else 1.0
-                print(f"    [*] C (GCC -O2)    : {t_c:.4f}s  ->  {out_c[:80]}  (AIC is {speedup_aic_vs_c:.2f}x of C)")
+        if has_cc:
+            t_c, out_c = run_exe(c_exe)
+            row["C (GCC -O2)"] = t_c
+            speedup_aic_vs_c = t_aic / t_c if isinstance(t_aic, float) and t_c > 0 else 1.0
+            print(f"    [*] C (GCC -O2)    : {t_c:.4f}s  ->  {out_c[:80]}  (AIC is {speedup_aic_vs_c:.2f}x of C)")
 
         # Run Node.js
         if has_node:
             t_js, out_js = measure_execution(["node", js_file])
             row["Node.js (V8)"] = t_js
-            speedup_js_vs_aic = t_js / t_aic if t_aic > 0 else 1.0
+            speedup_js_vs_aic = t_js / t_aic if isinstance(t_aic, float) and t_aic > 0 else 1.0
             print(f"    [*] Node.js (V8)   : {t_js:.4f}s  ->  {out_js[:80]}  (AIC is {speedup_js_vs_aic:.2f}x faster)")
 
         # Run Python 3.11
         if has_python:
             t_py, out_py = measure_execution([sys.executable, py_file])
             row["Python 3.11"] = t_py
-            speedup_py_vs_aic = t_py / t_aic if t_aic > 0 else 1.0
+            speedup_py_vs_aic = t_py / t_aic if isinstance(t_aic, float) and t_aic > 0 else 1.0
             print(f"    [*] Python 3.11    : {t_py:.4f}s  ->  {out_py[:80]}  (AIC is {speedup_py_vs_aic:.2f}x faster)")
 
         results.append(row)
@@ -411,15 +430,20 @@ def main():
     print("\n" + "=" * 80)
     print("PERFORMANCE BENCHMARK SUMMARY (Execution Time in Seconds, Lower is Faster)")
     print("=" * 80)
-    header = f"{'Benchmark Task':<36} | {'AIC (Native)':<12} | {'C (GCC -O2)':<12} | {'Node.js (V8)':<12} | {'Python 3.11':<12}"
+    header = (f"{'Benchmark Task':<34} | {'AIC -O0':<10} | {'AIC -O1':<10} | {'-O1 gain':<9} "
+              f"| {'C -O2':<10} | {'O1 / C':<8} | {'Node':<10} | {'Python':<10}")
     print(header)
     print("-" * len(header))
     for r in results:
-        aic_t = f"{r.get('AIC (Native)', 0):.4f}s"
-        c_t = f"{r.get('C (GCC -O2)', 0):.4f}s" if 'C (GCC -O2)' in r else "N/A"
-        js_t = f"{r.get('Node.js (V8)', 0):.4f}s" if 'Node.js (V8)' in r else "N/A"
-        py_t = f"{r.get('Python 3.11', 0):.4f}s" if 'Python 3.11' in r else "N/A"
-        print(f"{r['name']:<36} | {aic_t:<12} | {c_t:<12} | {js_t:<12} | {py_t:<12}")
+        o0, o1, c = r.get("AIC -O0"), r.get("AIC -O1"), r.get("C (GCC -O2)")
+        gain = f"{o0 / o1:.2f}x" if o0 and o1 else "N/A"
+        vs_c = f"{o1 / c:.2f}x" if o1 and c else "N/A"
+        def fmt(v):
+            return f"{v:.4f}s" if v else "N/A"
+        js = r.get("Node.js (V8)")
+        py = r.get("Python 3.11")
+        print(f"{r['name'][:34]:<34} | {fmt(o0):<10} | {fmt(o1):<10} | {gain:<9} | "
+              f"{fmt(c):<10} | {vs_c:<8} | {fmt(js):<10} | {fmt(py):<10}")
 
     print("=" * 80)
 

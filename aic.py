@@ -57,7 +57,11 @@ def cmd_build(args):
     _win_target = target == "pe" and (sys.platform == "win32" or fmt == "shared")
     _bridge = "tools/aic_wincrt_bridge.s" if _win_target else "tools/aic_linux_bridge.s"
     native_ok = False
-    if aic_exe and not args.force_python:
+    opt_level = getattr(args, "opt", False) or getattr(args, "_opt", False)
+    # ponytail: the native bootstrap compiler (compiler.aic) has no -O1 pass, so
+    # requesting -O1 must go through host codegen. Port the pass into
+    # compiler.aic only when the two-stage rollout says it's validated.
+    if aic_exe and not args.force_python and not opt_level:
         res = subprocess.run([aic_exe, src_file, asm_file, _bridge], capture_output=True, text=True)
         out_msg = (res.stderr or "") + "\n" + (res.stdout or "")
         if res.returncode == 0 and "[ERR :code" not in out_msg and os.path.exists(asm_file):
@@ -75,7 +79,7 @@ def cmd_build(args):
     if not native_ok:
         from aic_codegen import compile_file
         try:
-            compile_file(src_file, asm_file, bridge_file=os.path.abspath(_bridge))
+            compile_file(src_file, asm_file, bridge_file=os.path.abspath(_bridge), opt_level=opt_level)
         except Exception as e:
             print(f"[ERR] Host compilation failed: {e}")
             sys.exit(1)
@@ -173,6 +177,7 @@ def cmd_run(args):
     args.target = "auto"
     args.force_python = False
     args.keep_asm = False
+    args._opt = getattr(args, "opt", False)
     cmd_build(args)
 
     try:
@@ -299,12 +304,14 @@ def main():
                          help="Generate a C header (.h) sidecar alongside the shared library")
     p_build.add_argument("--keep-asm", action="store_true", help="Keep intermediate .s file")
     p_build.add_argument("--force-python", action="store_true", help="Force Python compiler instead of native aic.exe")
+    p_build.add_argument("-O1", "--opt", action="store_true", help="Enable -O1: linear scan register allocation")
     p_build.set_defaults(func=cmd_build)
 
     # run
     p_run = subparsers.add_parser("run", help="Compile and run an .aic program natively")
     p_run.add_argument("input", help="Input .aic file")
     p_run.add_argument("--interp", action="store_true", help="Run via reference interpreter instead of native binary")
+    p_run.add_argument("--opt", "-O1", action="store_true", help="Enable -O1 register allocation")
     p_run.add_argument("extra_args", nargs=argparse.REMAINDER, help="Optional arguments passed to the program")
     p_run.set_defaults(func=cmd_run)
 

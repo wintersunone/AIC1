@@ -806,6 +806,9 @@ class Codegen:
         self.types = {}          # active scope's name -> "int"/"str"
         self.epilogue = None     # active function's epilogue label, or None in main
         self.str_labels = {}     # literal text -> rodata label (deduped)
+        self.allocation = {}      # var_name -> reg or None (stack); -O1 only
+        self.opt_enabled = False  # set by compile_main/compile_function when -O1
+        self.reg_area = 0         # bytes of pushed callee-saved regs; slots start below
 
     def emit(self, s):
         self.lines.append(s)
@@ -815,7 +818,11 @@ class Codegen:
         return f".L{base}{self.label_n}"
 
     def slot_offset(self, name):
-        return -8 * (self.slots[name] + 1)
+        # ponytail: pushq'd callee-saved regs occupy rbp-8..rbp-8n, exactly where
+        # -8*(idx+1) slots sat. Shift the slots below them or the zero-init/stores
+        # overwrite the saved regs and the callee pops garbage into %r12-%r15.
+        # reg_area is 0 when -O1 is off, so -O0 output is unchanged.
+        return -(self.reg_area + 8 * (self.slots[name] + 1))
 
     def string_label(self, text):
         if text not in self.str_labels:
@@ -892,6 +899,10 @@ class Codegen:
         if isinstance(node, Symbol):
             if hasattr(self, "constants") and node.name in self.constants:
                 self.emit(f"    movq    ${self.constants[node.name]}, %rax")
+                return
+            alloc_reg = self.allocation.get(node.name)
+            if alloc_reg is not None:
+                self.emit(f"    movq    {alloc_reg}, %rax")
                 return
             off = self.slot_offset(node.name)
             self.emit(f"    movq    {off}(%rbp), %rax")
@@ -1450,7 +1461,11 @@ class Codegen:
                 self.emit("    call    aic_printf")
         elif op == "!":
             self.compile_expr(node[2])
-            self.emit(f"    movq    %rax, {self.slot_offset(node[1].name)}(%rbp)")
+            dst_reg = self.allocation.get(node[1].name)
+            if dst_reg is not None:
+                self.emit(f"    movq    %rax, {dst_reg}")
+            else:
+                self.emit(f"    movq    %rax, {self.slot_offset(node[1].name)}(%rbp)")
         elif op == "^":
             self.compile_expr(node[1])
             self.emit(f"    jmp     {self.epilogue}")
@@ -1488,25 +1503,43 @@ class Codegen:
                 var_name = node[3][0].name
                 body = node[4:]
 
-            var_off = self.slot_offset(var_name)
-            if isinstance(start_node, int):
-                self.emit(f"    movq    ${start_node}, {var_off}(%rbp)")
+            var_reg = self.allocation.get(var_name)
+            if var_reg is not None:
+                # Zero memory round-trip: loop var lives in a callee-saved reg.
+                if isinstance(start_node, int):
+                    self.emit(f"    movq    ${start_node}, {var_reg}")
+                else:
+                    self.compile_expr(start_node)
+                    self.emit(f"    movq    %rax, {var_reg}")
+                self.emit(f"{top_l}:")
+                self.compile_expr(limit_node)          # limit -> %rax
+                self.emit(f"    movq    {var_reg}, %rbx")   # %rbx is scratch, not allocatable
+                self.emit("    cmpq    %rax, %rbx")
+                self.emit(f"    jge     {end_l}")
+                for stmt in body:
+                    self.compile_stmt(stmt)
+                self.emit(f"    incq    {var_reg}")
+                self.emit(f"    jmp     {top_l}")
             else:
-                self.compile_expr(start_node)
-                self.emit(f"    movq    %rax, {var_off}(%rbp)")
+                var_off = self.slot_offset(var_name)
+                if isinstance(start_node, int):
+                    self.emit(f"    movq    ${start_node}, {var_off}(%rbp)")
+                else:
+                    self.compile_expr(start_node)
+                    self.emit(f"    movq    %rax, {var_off}(%rbp)")
 
-            self.emit(f"{top_l}:")
-            self.emit(f"    movq    {var_off}(%rbp), %rax")
-            self.emit("    pushq   %rax")
-            self.compile_expr(limit_node)
-            self.emit("    movq    %rax, %rbx")
-            self.emit("    popq    %rax")
-            self.emit("    cmpq    %rbx, %rax")
-            self.emit(f"    jge     {end_l}")
-            for stmt in body:
-                self.compile_stmt(stmt)
-            self.emit(f"    incq    {var_off}(%rbp)")
-            self.emit(f"    jmp     {top_l}")
+                self.emit(f"{top_l}:")
+                self.emit(f"    movq    {var_off}(%rbp), %rax")
+                self.emit("    pushq   %rax")
+                self.compile_expr(limit_node)
+                self.emit("    movq    %rax, %rbx")
+                self.emit("    popq    %rax")
+                self.emit("    cmpq    %rbx, %rax")
+                self.emit(f"    jge     {end_l}")
+                for stmt in body:
+                    self.compile_stmt(stmt)
+                self.emit(f"    incq    {var_off}(%rbp)")
+                self.emit(f"    jmp     {top_l}")
             self.emit(f"{end_l}:")
         elif op == "D":
             for stmt in node[1:]:
@@ -1524,36 +1557,121 @@ class Codegen:
                 f"op, a file op, or a function call - got '{op}'"
             )
 
+    # --- Linear scan register allocation (Poletto & Sarkar, 1999) ---------------
+    # ponytail: -O1 only; parameters stay on the stack (they are copied in the
+    # prologue and never rewritten by the ABI contract). %rbx is deliberately NOT
+    # in the pool - the expression codegen has always used %rbx as its scratch
+    # register, and compiler.aic still does, so keeping it free preserves the
+    # self-hosting fixed point.
+    _ALLOCABLE_REGS = ["%r12", "%r13", "%r14", "%r15"]
+
+    @staticmethod
+    def _collect_intervals(stmts, declared, params):
+        """Live intervals [start, end] for non-param locals."""
+        writes, reads = {}, {}
+        counter = [0]
+        def walk(node, in_write=False):
+            if isinstance(node, Symbol):
+                name = node.name
+                if name in declared and name not in params:
+                    if in_write:
+                        writes.setdefault(name, counter[0])
+                    else:
+                        reads[name] = counter[0]
+                counter[0] += 1
+            elif isinstance(node, list) and node:
+                op_name = node[0].name if isinstance(node[0], Symbol) else str(node[0])
+                counter[0] += 1
+                if op_name == "!":
+                    walk(node[1], in_write=True)
+                    for c in node[2:]:
+                        walk(c, in_write=False)
+                elif op_name == "@>":
+                    walk(node[1], in_write=False)
+                    walk(node[2], in_write=False)
+                    if len(node) >= 4 and isinstance(node[2], list) and len(node[2]) == 1 and isinstance(node[2][0], Symbol):
+                        walk(node[2][0], in_write=True)
+                        for c in node[3:]:
+                            walk(c, in_write=False)
+                    else:
+                        walk(node[3][0], in_write=True)
+                        for c in node[4:]:
+                            walk(c, in_write=False)
+                elif op_name in ("?", "W"):
+                    walk(node[1], in_write=False)
+                    for c in node[2:]:
+                        walk(c, in_write=False)
+                else:
+                    for c in node[1:]:
+                        walk(c, in_write=False)
+        for stmt in stmts:
+            walk(stmt)
+        result = [(v, si, ri) for v, si in writes.items()
+                  if (ri := reads.get(v)) is not None and ri > si]
+        result.sort(key=lambda x: x[1])
+        return result
+
+    @staticmethod
+    def _linear_scan(intervals):
+        """Greedy unique-register assignment. Returns {var: reg_or_None}.
+
+        ponytail: registers are NOT shared between different vars. Codegen maps
+        var->reg for the whole function and emits no reload at an interval
+        boundary, so sharing would silently alias two variables. Vars beyond the
+        pool fall back to their stack slot (correct, just slower). Upgrade path:
+        reuse regs and emit spill/reload at boundaries if >4 hot vars matter.
+        """
+        allocation = {}
+        free_regs = list(Codegen._ALLOCABLE_REGS)
+        for var, start, end in intervals:
+            allocation[var] = free_regs.pop(0) if free_regs else None
+        return allocation
+
     # --- frame builders --------------------------------------------------------
     def _frame_and_zeroinit(self, slots, param_names):
         n = len(slots)
-        frame_size = max(16, ((n * 8 + 15) // 16) * 16)
+        # n pushes leave rsp ≡ -8n (mod 16). reg_area(=8n) + a multiple of 16
+        # therefore restores rsp ≡ 0 (mod 16) before every call.
+        frame_size = self.reg_area + max(16, ((n * 8 + 15) // 16) * 16)
         zero_targets = [name for name in slots if name not in param_names]
         zero_init = "\n".join(
-            f"    movq    $0, {-8 * (slots[name] + 1)}(%rbp)" for name in zero_targets
+            f"    movq    $0, {self.slot_offset(name)}(%rbp)" for name in zero_targets
         )
-        return frame_size, zero_init
+        saved_regs = sorted(
+            {r for r in self.allocation.values() if r is not None},
+            key=lambda r: Codegen._ALLOCABLE_REGS.index(r)
+        )
+        return frame_size, zero_init, saved_regs
 
     def compile_main(self, main_stmts, main_slots, main_types):
         self.slots = main_slots
         self.types = main_types
         self.epilogue = ".Lmain_ret"
+        if self.opt_enabled:
+            intervals = self._collect_intervals(main_stmts, self.analyzer.declared, set())
+            self.allocation = self._linear_scan(intervals)
+        self.reg_area = 8 * len({r for r in self.allocation.values() if r is not None})
         for n in main_stmts:
             self.compile_stmt(n)
         body = "\n".join(self.lines)
         self.lines = []
-        frame_size, zero_init = self._frame_and_zeroinit(main_slots, set())
+        frame_size, zero_init, saved_regs = self._frame_and_zeroinit(main_slots, set())
+        # -O0 must be byte-identical to compiler.aic's output (self-hosting fixed
+        # point), so emit nothing extra when no register was allocated.
+        push_lines = "".join(f"    pushq   {r}\n" for r in saved_regs)
+        pop_lines = "".join(f"    popq    {r}\n" for r in reversed(saved_regs))
+        restore = f"    addq    ${frame_size}, %rsp\n" if saved_regs else ""
         return f"""\
     .globl aic_main
 aic_main:
     pushq   %rbp
     movq    %rsp, %rbp
-    subq    ${frame_size}, %rsp
+{push_lines}    subq    ${frame_size}, %rsp
 {zero_init}
 {body}
     movq    $0, %rax
 .Lmain_ret:
-    leave
+{restore}{pop_lines}    leave
     ret
 """
 
@@ -1561,14 +1679,18 @@ aic_main:
         self.slots = fn.slots
         self.types = fn.types
         self.epilogue = f".Lret_{fn.name}"
+        if self.opt_enabled:
+            intervals = self._collect_intervals(fn.body_stmts, fn.declared, set(fn.params))
+            self.allocation = self._linear_scan(intervals)
+        self.reg_area = 8 * len({r for r in self.allocation.values() if r is not None})
         for stmt in fn.body_stmts:
             self.compile_stmt(stmt)
         body = "\n".join(self.lines)
         self.lines = []
-        frame_size, zero_init = self._frame_and_zeroinit(fn.slots, set(fn.params))
+        frame_size, zero_init, saved_regs = self._frame_and_zeroinit(fn.slots, set(fn.params))
         arg_copy_lines = []
         for i in range(len(fn.params)):
-            slot_off = -8 * (i + 1)
+            slot_off = self.slot_offset(fn.params[i])
             if i < len(_ARG_REGS):
                 arg_copy_lines.append(f"    movq    {_ARG_REGS[i]}, {slot_off}(%rbp)")
             else:
@@ -1576,17 +1698,22 @@ aic_main:
                 arg_copy_lines.append(f"    movq    {stack_off}(%rbp), %rax")
                 arg_copy_lines.append(f"    movq    %rax, {slot_off}(%rbp)")
         arg_copy = "\n".join(arg_copy_lines)
+        # -O0 must be byte-identical to compiler.aic's output (self-hosting fixed
+        # point), so emit nothing extra when no register was allocated.
+        push_lines = "".join(f"    pushq   {r}\n" for r in saved_regs)
+        pop_lines = "".join(f"    popq    {r}\n" for r in reversed(saved_regs))
+        restore = f"    addq    ${frame_size}, %rsp\n" if saved_regs else ""
         return f"""\
 {fn.label}:
     pushq   %rbp
     movq    %rsp, %rbp
-    subq    ${frame_size}, %rsp
+{push_lines}    subq    ${frame_size}, %rsp
 {arg_copy}
 {zero_init}
 {body}
     movq    $0, %rax
 {self.epilogue}:
-    leave
+{restore}{pop_lines}    leave
     ret
 """
 
@@ -1705,7 +1832,7 @@ def read_source_with_imports(src_path, visited=None):
     return pattern.sub(replacer, source)
 
 
-def compile_file(src_path, asm_path, bridge_file=None):
+def compile_file(src_path, asm_path, bridge_file=None, opt_level=False):
     source = read_source_with_imports(src_path)
     tokens, lines = tokenize(source)
     program_nodes = []
@@ -1715,6 +1842,7 @@ def compile_file(src_path, asm_path, bridge_file=None):
     analyzer = Analyzer()
     main_stmts, main_slots, main_types = analyzer.analyze(program_nodes)
     cg = Codegen(analyzer.functions, analyzer)
+    cg.opt_enabled = opt_level
     asm = cg.build(main_stmts, main_slots, main_types, bridge_file=bridge_file)
     with open(asm_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(asm)

@@ -40,3 +40,21 @@
 [! s8 [sum8 1 2 3 4 5 6 7 8]]
 [. "Sum 8:" s8]
 
+// 8. -O1 spill edge case: 8 live locals vs a 4-register pool.
+// With -O1, four get callee-saved registers and the rest spill to stack slots;
+// the answer must equal the -O0 result exactly (expected sum 36).
+[: eight_live [] [D
+  [! a 1]
+  [! b 2]
+  [! c 3]
+  [! d 4]
+  [! e 5]
+  [! f 6]
+  [! g 7]
+  [! h 8]
+  [^ [+ [+ [+ [+ [+ [+ [+ a b] c] d] e] f] g] h]]
+]]
+[! eight_sum [eight_live]]
+[. "Eight live:" eight_sum]
+
+
