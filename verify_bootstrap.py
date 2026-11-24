@@ -196,6 +196,7 @@ def main():
         "Slice 2: Antigravity\n"
         "Slice 3: AI Compiler\n"
         "Sum 8: 36\n"
+        "Eight live: 36\n"
     )
     out_opt = p_opt.stdout.replace("\r\n", "\n")
     if out_opt != expected_opt:

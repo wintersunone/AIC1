@@ -235,6 +235,26 @@ def cmd_bench(args):
     import benchmarks.speed.run_speed_benchmarks as speed_bench
     speed_bench.main()
 
+def cmd_agent(args):
+    from agent.loop import run_agent_loop
+    llm_fn = None
+    if args.mock:
+        # Deterministic responder for offline runs: one canned reply.
+        canned = args.mock
+        def responder(messages):
+            return canned
+        llm_fn = responder
+    artifact = run_agent_loop(
+        args.task,
+        args.out,
+        max_iterations=args.max_iters,
+        opt=args.opt,
+        llm_fn=llm_fn,
+    )
+    print(artifact)
+    if artifact.status != "SUCCESS":
+        sys.exit(1)
+
 def cmd_repl(args):
     print("================================================================")
     print("AIC (AI Compiler / AI C) Interactive REPL v5.0")
@@ -330,6 +350,20 @@ def main():
     # repl
     p_repl = subparsers.add_parser("repl", help="Start an interactive read-eval-print loop (REPL)")
     p_repl.set_defaults(func=cmd_repl)
+
+    # agent (Milestone 3 - Agent Zero)
+    p_agent = subparsers.add_parser(
+        "agent", help="Agent Zero: turn a plain-English task into a verified .so/.dll + .h")
+    p_agent.add_argument("task", help="Plain-English systems task")
+    p_agent.add_argument("-o", "--out", default="libagent",
+                         help="Output library prefix (produces <out>.so/.dll + <out>.h)")
+    p_agent.add_argument("--opt", "-O1", action="store_true",
+                         help="Compile candidates with -O1 register allocation")
+    p_agent.add_argument("--max-iters", type=int, default=5,
+                         help="Maximum generate/verify iterations (default 5)")
+    p_agent.add_argument("--mock", default=None,
+                         help="Offline: use this literal reply for every attempt (no LLM call)")
+    p_agent.set_defaults(func=cmd_agent)
 
     args = parser.parse_args()
     args.func(args)
