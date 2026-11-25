@@ -16,7 +16,7 @@ Modern programming languages (C, C++, Rust, Python) were designed for human eyes
 ### The AIC Solution
 1. **100% Unambiguous S-Expression Prefix Syntax**: Every operation is strictly delimited by square brackets `[op arg1 arg2 ...]`. Precedence is 100% explicit; AST construction is trivial and one-to-one.
 2. **Deterministic Token-to-AST Mapping**: Single-character or deterministic-length delimiters guarantee clean token alignment across all modern BPE and WordPiece tokenizers (Llama, GPT, Claude, Gemini).
-3. **Direct Machine Code Generation with Zero External Dependencies**: AIC compiles itself to native x86-64 assembly and emits standalone Windows PE32+ (`.exe`) and Linux ELF64 (`.elf`) executables directly with custom, zero-dependency emitters.
+3. **Direct Machine Code Generation with Zero External Dependencies**: AIC compiles itself to native assembly and emits standalone executables directly with custom, zero-dependency emitters: **Windows PE32+ (x86-64)**, **Linux ELF64 (x86-64 and ARM64/AArch64)**, and **macOS Apple Silicon Mach-O ARM64** (`.macho` / `.dylib`, ad-hoc signed).
 4. **Mathematical Fixed-Point Self-Hosting Closure**: Provably verified across 4 compilation generations:
    $$\text{Gen0.s} \equiv \text{Gen1.s} \equiv \text{Gen2.s} \equiv \text{GenPE.s}$$
    Zero bytes of divergence across all generations.
@@ -351,8 +351,12 @@ Unit testing framework for autonomous test evaluation:
 AIC contains no GCC, Clang, or GNU binutils runtime requirements. Executable binaries are produced directly from assembly:
 - **Windows PE32+ (`tools/aic_pe_emitter.py`)**:
   Emits valid portable executables (`.exe`) with DOS stub, PE32+ headers, `.text`, `.rdata`, `.data`, `.pdata`, and IAT import tables bound to `msvcrt.dll` or `ucrtbase.dll`.
-- **Linux ELF64 (`tools/aic_elf_emitter.py`)**:
+- **Linux ELF64 (x86-64) (`tools/aic_elf_emitter.py`)**:
   Emits static Linux ELF64 binaries (`.elf`) with `_start` entry, `PT_LOAD` segments, and built-in Linux x86-64 syscall implementations (`sys_write`, `sys_read`, `sys_open`, `sys_brk`, `sys_mmap`, `sys_exit`).
+- **Linux ARM64 / AArch64 (`tools/aic_arm64_emitter.py`)**:
+  Emits static AArch64 ELF64 executables (`.elf`) and shared objects (`.so`) with raw `svc #0` syscalls (openat/lseek/read/write/mmap/exit/clock_gettime) — no libc, no PLT/GOT. The embedded assembler encodes the instruction subset the ARM64 backend emits; every expression-stack push/pop moves SP by 16 bytes so dereferenced SP stays 16-byte aligned on real silicon.
+- **macOS Apple Silicon (`tools/aic_macho_emitter.py`)**:
+  Emits `MH_EXECUTE` / `MH_DYLIB` ARM64 Mach-O images with 0x4000 (16 KiB) page alignment, `LC_LOAD_DYLINKER` + `LC_LOAD_DYLIB` bound through an `LC_DYLD_INFO_ONLY` bind stream into `__DATA` GOT slots, an `LC_DYLD_EXPORTS_TRIE` for underscore-prefixed symbols, and a pure-Python SHA-256 ad-hoc code signature (`CS_SuperBlob` / `CS_CodeDirectory`). No Xcode, `clang`, `ld64`, or `codesign`.
 
 ---
 
@@ -371,6 +375,8 @@ Rules to follow:
 4. Bind libc operations (H, O, Z, R, K, X, N, V) to local variables with [! var [op ...]] before passing to nested expressions.
 5. S-records are defined with [:: RecordName field1 field2 ...] and constructed with [RecordName val1 val2 ...].
 6. Use lib/math.aic, lib/string.aic, lib/vec.aic, lib/map.aic, lib/json.aic, lib/arena.aic, lib/io.aic for standard functionality.
+7. PRINT RULE: `[. a b c]` prints a space between intermediate arguments and a newline after the last one. Never append a trailing "\n" and never add manual spaces. To print a bare number, write `[. [N value]]` (or `[. value]`).
+8. Do NOT invent builtins: there is no `mod`, `sqrt`, `//`, `abs`, `pow`, `len`, or `print`. For modulo use the real `%` operator, `[% a b]`. Use `lib/math.aic` for `math_sqrt`/`math_abs`/`math_pow` and `[L s]` for string length.
 ```
 
 ### 8.2 Few-Shot Examples
@@ -384,7 +390,7 @@ Rules to follow:
 ]]
 
 [! res [fib 10]]
-[. "Fib(10) =" res "\n"]
+[. "Fib(10) =" res]
 ```
 
 #### Example 2: In-Place Bubble Sort on Word Buffer
@@ -419,7 +425,7 @@ Rules to follow:
     [? [json_obj_contains root "action"] [D
       [! action_val [json_obj_get root "action"]]
       [! action_str [json_get_str action_val]]
-      [. "Executing action: " action_str "\n"]
+      [. "Executing action:" action_str]
     ] [D]]
   ] [D]]
   [^ 0]
@@ -433,8 +439,8 @@ Rules to follow:
 The compiler verifies bitwise mathematical closure via `verify_bootstrap.py`:
 - 18-stage verification passes in under 3 seconds.
 - 0-diff identity proven across all bootstrap compiler generations:
-  $$\text{compiler\_gen0.s} \equiv \text{compiler\_gen1.s} \equiv \text{compiler\_gen2.s} \equiv \text{compiler\_gen\_pe.s} \quad (717,042\text{ bytes})$$
-- Standard library (`math`, `string`, `vec`, `map`), JSON parser/serializer, linear memory arena, safe file I/O, and user programs tested and verified natively on dual platforms (Windows PE32+ and Linux ELF64).
+  $$\text{compiler\_gen0.s} \equiv \text{compiler\_gen1.s} \equiv \text{compiler\_gen2.s} \equiv \text{compiler\_gen\_pe.s} \quad (725,689\text{ bytes})$$
+- Standard library (`math`, `string`, `vec`, `map`), JSON parser/serializer, linear memory arena, safe file I/O, and user programs tested and verified natively on Windows PE32+, Linux ELF64 (x86-64), Linux ARM64 ELF64, and macOS Apple Silicon Mach-O ARM64 (ad-hoc signed, verified under `codesign -v`).
 
 ---
 
@@ -464,4 +470,6 @@ AIC compiles directly to native machine code without virtual machine interpreter
 | :--- | :--- | :--- |
 | **M1 — C-ABI Interoperability Bridge** | **COMPLETE (2026-09-22)** | `--format shared --header` emits self-contained `.so` (ELF `ET_DYN`, raw-syscall runtime, zero undefined symbols, `.init_array` arena ctor, SysV `.dynsym`/`.hash`) and `.dll` (PE32+, `Characteristics=0x2022`, export directory) plus a `.h` sidecar. Emitters: `tools/aic_elf_emitter.py::build_shared_elf`, `tools/aic_pe_emitter.py::build_standalone_dll`, `tools/generate_header.py`. E2E validation: `tests/test_c_interop.py` (ctypes on x86-64 hosts; per-export dlopen/dlsym/call harness under the cross dynamic loader on other hosts). |
 | **M2 — Linear Scan Register Allocation (`-O1`)** | **COMPLETE (2026-11-24)** | `aic_codegen.py`: live-interval analysis + greedy callee-saved allocation (`%r12`–`%r15`, `%rbx` reserved as expression scratch to preserve the `compiler.aic` fixed point). Fixed callee-save/stack-slot collision by shifting slots below `reg_area`. `aic.py build -O1` / `aic.py run -O1`. `tests/test_optimizations.aic` spill case (8 live locals, 4 regs + 4 spills). Benchmarks: `benchmarks/speed/run_speed_benchmarks.py` (-O0/-O1/C/Python). AIC is still ~2.4–5.5× of GCC `-O2`; the residual is the expression `push`/`pop` operand stack, not variable round-trips. |
-| **M3 — Agent Zero (autonomous systems loop)** | **COMPLETE (2026-11-24)** | `agent/` package: `client.py` (stdlib-only OpenAI-compatible client), `prompts.py` (knowledge-parity system/reflection prompts derived from `prompt_parity.md` + `findings.md`), `sandbox.py` (import dedupe, ms telemetry, typed `[ERR :code …]` feedback, 2s run timeout), `loop.py` (≤5 iterations, bounded context, exports `.so`/`.dll` + `.h` + ctypes example). CLI: `python aic.py agent "<task>" -o <prefix> [--opt] [--max-iters N]`. Deterministic test: `tests/test_agent_zero.py` (broken attempt 1 → PARSE feedback → valid attempt 2 → verified library). |
+| **M3 — Agent Zero (autonomous systems loop)** | **COMPLETE (2026-11-24)** | `agent/` package: `client.py` (stdlib-only OpenAI-compatible client), `prompts.py` (knowledge-parity system/reflection prompts derived from `prompt_parity.md` + `findings.md`), `sandbox.py` (import dedupe, ms telemetry, typed `[ERR :code …]` feedback, 2s run timeout), `loop.py` (≤5 iterations, bounded context, exports `.so`/`.dll` + `.h` + ctypes example). CLI: `python aic.py agent "<task>" -o <prefix> [--opt] [--max-iters N]`. Deterministic test: `tests/test_agent_zero.py` (broken attempt 1 → PARSE feedback → valid attempt 2 → verified library).  Measured on the 30-task `model_bench` set with the parity prompt: **63.3% (19/30)** pass@1 over a 5-iteration loop, avg 3.43 iterations (vs 0.33% stock single-shot and 40.0% parity single-shot). Script: `benchmarks/model_bench/eval_agent_zero.py`. |
+| **M4a — Native Linux ARM64 (AArch64) backend** | **COMPLETE (2026-11-25)** | `aic_codegen_arm64.py` (AAPCS64 codegen, 16-byte SP discipline everywhere, x19–x28 locals with stack spill), `tools/aic_arm64_emitter.py` (pure-Python AArch64 assembler + ELF64/`.so` packer, `e_machine=183`, `.dynsym`/SysV `.hash`/`.init_array` with `R_AARCH64_RELATIVE`), `tools/arm64_runtime.py` (raw `svc #0` syscall runtime). `aic.py build|run --arch arm64`. Encoder cross-checked 56/56 forms against `aarch64-linux-gnu-as`. `tests/test_arm64.py` runs 7 native programs plus a `ctypes.CDLL` `.so` (`fib(10)=55`, `add_numbers(2,40)=42`); all ARM64 outputs are byte-identical to their x86-64 counterparts. |
+| **M4b — Native macOS Apple Silicon (Mach-O ARM64)** | **COMPLETE (2026-11-25)** | `tools/aic_macho_emitter.py` (`MH_EXECUTE`/`MH_DYLIB`, 0x4000 page alignment, `__PAGEZERO`, `LC_LOAD_DYLINKER`, `LC_LOAD_DYLIB`, `LC_MAIN`, `LC_DYLD_INFO_ONLY` bind stream, `LC_DYLD_EXPORTS_TRIE`, SHA-256 `CS_SuperBlob` ad-hoc signer) and `tools/macos_runtime.py` (Darwin libSystem bridge, x18 untouched). `aic.py --target macho` for build and run. `tests/test_macos_arm64.py` validates headers/segments/trie/signature on any host and runs natively on Darwin/arm64: `codesign -v` passes and `ctypes.CDLL` resolves `_fib`/`_add_numbers`. Verified on a `macos-15` Apple Silicon runner. |

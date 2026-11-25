@@ -205,6 +205,14 @@ def cmd_build(args):
         print(f"[ERR] Unknown target '{target}'")
         sys.exit(1)
 
+    # Direct emitters write plain files with no execute bit. Set it for
+    # exe output so `./app.elf` (and the benchmark sandbox) can run it.
+    if fmt == "exe" and os.path.exists(out_file):
+        try:
+            os.chmod(out_file, os.stat(out_file).st_mode | 0o111)
+        except OSError:
+            pass
+
     if not args.keep_asm and os.path.exists(asm_file):
         try: os.remove(asm_file)
         except: pass
@@ -386,7 +394,18 @@ def cmd_repl(args):
             print(f"Error: {e}")
             buf = ""
 
-def main():
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # `run` forwards everything after "--" to the program. Splitting here keeps
+    # --target/--arch/-O1 usable in ANY position (argparse.REMAINDER used to
+    # swallow them as program arguments).
+    prog_args = []
+    if argv and argv[0] == "run" and "--" in argv:
+        cut = argv.index("--")
+        prog_args = argv[cut + 1:]
+        argv = argv[:cut]
+
     parser = argparse.ArgumentParser(
         description="AIC (AI Compiler / AI C) - Systems Language Engineered for Artificial Intelligence",
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -419,7 +438,6 @@ def main():
     p_run.add_argument("--arch", choices=["x86_64", "arm64"], default="x86_64",
                        help="Target machine architecture (default: x86_64)")
     p_run.add_argument("--opt", "-O1", action="store_true", help="Enable -O1 register allocation")
-    p_run.add_argument("extra_args", nargs=argparse.REMAINDER, help="Optional arguments passed to the program")
     p_run.set_defaults(func=cmd_run)
 
     # test
@@ -452,7 +470,8 @@ def main():
                          help="Offline: use this literal reply for every attempt (no LLM call)")
     p_agent.set_defaults(func=cmd_agent)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.extra_args = prog_args
     args.func(args)
 
 if __name__ == "__main__":

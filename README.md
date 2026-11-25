@@ -5,8 +5,8 @@
 [![Bootstrap Verification](https://img.shields.io/badge/Bootstrap-18%2F18%20Stages%20Passing-brightgreen)]()
 [![Self-Hosting Closure](https://img.shields.io/badge/Closure-Bitwise%200--Diff-blue)]()
 [![Performance](https://img.shields.io/badge/Performance-Up%20to%2029x%20Python-orange)]()
-[![AIC-Bench Score](https://img.shields.io/badge/AIC--Bench-100%25%20pass%401-success)]()
-[![Platform Targets](https://img.shields.io/badge/Targets-Windows%20PE%20%7C%20Linux%20ELF-purple)]()
+[![AIC-Bench Score](https://img.shields.io/badge/AIC--Bench-20%2F20%20Canonical-success)]()
+[![Platform Targets](https://img.shields.io/badge/Targets-Windows%20PE%20%7C%20Linux%20ELF%20(x64%2FARM64)%20%7C%20macOS%20Mach%E2%80%91O-purple)]()
 [![Toolchain Dependencies](https://img.shields.io/badge/Toolchain-0%20External%20Dependencies-red)]()
 
 ---
@@ -18,9 +18,9 @@ Traditional languages (C, C++, Rust, Python) were optimized for human visual aes
 **AIC** eliminates these failure modes by design:
 - **100% Unambiguous S-Expression Prefix Syntax**: Every expression is explicitly delimited by square brackets `[op arg1 arg2 ...]`. Precedence is purely structural and explicit.
 - **Single-BPE Token Alignment**: Delimiters and operators align cleanly across modern Byte-Pair Encoding (BPE) vocabularies.
-- **Zero External Toolchain Dependencies**: Direct machine code generation from assembly into standalone Windows PE32+ (`.exe`) and Linux ELF64 (`.elf`) executables without requiring GCC, Clang, GNU binutils, or glibc.
+- **Zero External Toolchain Dependencies**: Direct machine code generation from assembly into standalone **Windows PE32+** (`.exe`), **Linux ELF64** (x86-64 and ARM64 `.elf`/`.so`), and **macOS Apple Silicon Mach-O ARM64** (`.macho`/`.dylib`, ad-hoc signed) without requiring GCC, Clang, GNU binutils, glibc, Xcode, `ld64`, or `codesign`.
 - **Bitwise Fixed-Point Self-Hosting Closure**: The self-hosted compiler (`compiler.aic`) compiling itself produces bitwise identical machine code across all generations:
-  $$\text{Gen0.s} \equiv \text{Gen1.s} \equiv \text{Gen2.s} \equiv \text{GenPE.s} \quad (717,042\text{ bytes})$$
+  $$\text{Gen0.s} \equiv \text{Gen1.s} \equiv \text{Gen2.s} \equiv \text{GenPE.s} \quad (725,689\text{ bytes})$$
 
 ---
 
@@ -111,6 +111,23 @@ python aic.py repl
 python aic.py verify
 ```
 
+### 7. ARM64 and macOS Builds (Milestones 4a / 4b)
+```bash
+# Linux ARM64 executable and shared object (raw syscalls, no libc)
+python aic.py build code.aic --arch arm64 -o app_arm64.elf
+python aic.py build code.aic --arch arm64 --format shared --header -o libalgo_arm64.so
+
+# macOS Apple Silicon Mach-O (ad-hoc signed; no Xcode/clang/ld64/codesign)
+python aic.py build code.aic --target macho -o app.macho
+python aic.py build code.aic --target macho --format shared --header -o libalgo_macos.dylib
+```
+`--target macho` implies `--arch arm64`. Flags may appear on either side of the source path, and program arguments go after `--`:
+```bash
+python aic.py run code.aic --target macho
+python aic.py run code.aic --arch arm64 -- arg1 arg2
+```
+Validation: `python3 tests/test_arm64.py` and `python3 tests/test_macos_arm64.py`.
+
 ---
 
 ## Core Language Syntax
@@ -118,7 +135,7 @@ python aic.py verify
 ### Hello World & Formatting
 ```aic
 [! msg "Hello, AI Compiler!"]
-[. msg "\n"]
+[. msg]
 ```
 
 ### Functions and Recursion
@@ -131,7 +148,7 @@ Functions are declared with `[: name [params] [D body...]]` (or `[: [$ name] ...
 ]]
 
 [! res [fib 10]]
-[. "Fib(10) =" res "\n"]
+[. "Fib(10) =" res]
 ```
 
 ### Zero-Cost S-Records (`::`)
@@ -154,7 +171,7 @@ Functions are declared with `[: name [params] [D body...]]` (or `[: [$ name] ...
 ```aic
 // Loop i from 0 up to 10
 [@> 10 [i] [D
-  [. "Step:" i "\n"]
+  [. "Step:" i]
 ]]
 ```
 
@@ -187,7 +204,7 @@ AIC features a high-performance standard library written in 100% pure AIC:
 [! parsed [json_parse json_str_data]]
 
 [! action_val [json_obj_get parsed "action"]]
-[. "Action: " [json_get_str action_val] "\n"]
+[. "Action:" [json_get_str action_val]]
 ```
 
 ---
@@ -209,7 +226,42 @@ python benchmarks/eval_harness.py --canonical
 # Evaluate an LLM's predictions:
 python benchmarks/eval_harness.py --predictions model_output.jsonl
 ```
-**Current Canonical Score: 20/20 Passed (100.0% pass@1)**.
+**Current Canonical Score: 20/20 Passed (canonical self-tests, not an LLM pass@1)**.
+
+---
+
+## Milestones 2–4 (Optimization, Agent Zero, ARM64 & macOS)
+
+### Milestone 2 — `-O1` Linear Scan Register Allocation
+Every local variable used to live in a fixed `%rbp` stack slot. The `-O1` pass runs a Poletto–Sarkar linear scan and puts hot locals in callee-saved registers (`%rbx`, `%r12`–`%r15`), spilling to stack only when more than 5 are live at once.
+```bash
+python aic.py build code.aic -O1 -o app.elf
+python aic.py run code.aic -O1
+```
+Spill edge case: `tests/test_optimizations.aic` (8 live locals → 4 registers + 4 stack spills). Speed table: `benchmarks/speed/run_speed_benchmarks.py`.
+
+### Milestone 3 — Agent Zero
+An autonomous generate/compile/run/reflect loop that turns a plain-English task into a verified, drop-in shared library plus C header.
+```bash
+python aic.py agent "Write an integer square root function using Newton's method" -o libisqrt
+# -> libisqrt.so  +  libisqrt.h  +  libisqrt_example.py
+```
+It runs up to 5 iterations, feeding typed `[ERR :code ...]` diagnostics back to the model, so a broken first attempt self-corrects into a compiling artifact (typically 1–2 iterations, ~1.2 s total in the deterministic test). Test: `python3 tests/test_agent_zero.py`.
+
+### Milestone 4 — Cross-Platform ARM64 & macOS
+`--arch arm64` targets Linux AArch64 (ELF64 executables and `.so`, raw `svc #0` syscalls, zero libc). `--target macho` targets macOS Apple Silicon Mach-O ARM64 (`.macho` and `.dylib`, ad-hoc SHA-256 signed, dyld-bound libSystem) — no Xcode, `clang`, `ld64`, or `codesign` anywhere. Both backends emit instruction streams byte-identical to the x86-64 path on the canonical suites.
+```bash
+python3 tests/test_arm64.py
+python3 tests/test_macos_arm64.py
+```
+
+### Model Benchmark Transparency
+Measured on `qwen3.8-27b-sglang` across 900 samples: the stock prompt produced AIC pass@1 of **0.33% (1/300)**. With the knowledge-parity prompt from [`benchmarks/model_bench/prompt_parity.md`](benchmarks/model_bench/prompt_parity.md) — which states the `[.]` print rule, forbids invented builtins, and shows the real lib function names — pass@1 rose to **40.0% (120/300)**, and to **62.7% (94/150)** when the spec is in context. Every format-invalid output disappeared. The third rung is Agent Zero's 5-iteration reflect loop over the same 30 tasks and the same parity prompt:
+```bash
+python3 benchmarks/model_bench/eval_agent_zero.py --iters 5
+# pass@1: 19/30 = 63.3%   avg iters 3.43   (tier 1 62.5%, tier 2 62.5%, tier 3 75.0%, tier 4 50.0%)
+```
+Progression: **0.33%** (stock prompt, single shot) -> **40.0%** (parity prompt, single shot) -> **63.3%** (parity prompt + 5-iteration reflection). These are single-model, canonical-suite numbers, not a claim of general LLM competence.
 
 ---
 
@@ -274,7 +326,7 @@ A collection of annotated, standalone example programs is available in the [`exa
 
 AIC compiles directly to native binaries on both major operating systems:
 - **`aic.exe`** (Windows PE32+, 124 KB): Compiles `.aic` sources directly to x86-64 assembly on Windows.
-- **`aic.elf`** (Linux ELF64, 118 KB): Compiles `.aic` sources directly on Linux with 0 external dependencies (ideal for Docker and cloud sandboxes).
+- **`aic.elf`** (Linux ELF64, ~1.0 MB): Compiles `.aic` sources directly on Linux with 0 external dependencies (ideal for Docker and cloud sandboxes).
 
 ---
 
