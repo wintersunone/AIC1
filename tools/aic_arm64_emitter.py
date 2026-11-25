@@ -198,6 +198,14 @@ def movn(rd, imm16, shift=0):
     return 0x92800000 | (rd & 0x1F) | ((imm16 & 0xFFFF) << 5) | ((shift // 16) << 21)
 
 
+def br(rn):
+    return 0xD61F0000 | ((rn & 0x1F) << 5)
+
+
+def blr(rn):
+    return 0xD63F0000 | ((rn & 0x1F) << 5)
+
+
 def neg(rd, rm):
     return 0xCB0003E0 | (rd & 0x1F) | ((rm & 0x1F) << 16)
 
@@ -465,6 +473,10 @@ class Assembler:
             word = adr(rd, 0)
         elif mnem == "neg":
             word = neg(_reg(ops[0]), _reg(ops[1]))
+        elif mnem == "br":
+            word = br(_reg(ops[0]))
+        elif mnem == "blr":
+            word = blr(_reg(ops[0]))
         else:
             raise ValueError(f"unsupported instruction {mnem!r} in {s!r}")
 

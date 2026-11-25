@@ -879,9 +879,18 @@ aic_main:
         return "\n".join(out)
 
     # ------------------------------------------------------------ build
-    def build(self, main_stmts, slots, types):
+    def build(self, main_stmts, slots, types, macos_prefix=False):
         main_asm = self.compile_main(main_stmts, slots, types)
         fns = "\n".join(self.compile_function(f) for f in self.functions.values())
+
+        if macos_prefix:
+            # Darwin mangles C symbols with a leading underscore. Emit both the
+            # AIC internal label and the `_name` alias so dlsym("fib") resolves.
+            aliases = []
+            for f in self.functions.values():
+                pub = "".join(ch for ch in f.name if ch.isalnum() or ch in "_$")
+                aliases.append(f"    .globl _{pub}\n_{pub}:\n    b {f.label}")
+            fns = fns + "\n" + "\n".join(aliases)
 
         divzero = runtime = ""
         rodata_extra = ""
@@ -941,7 +950,7 @@ aic_arena_ptr:
         return s
 
 
-def compile_file_arm64(src_path, asm_path):
+def compile_file_arm64(src_path, asm_path, macos_prefix=False):
     source = read_source_with_imports(src_path)
     tokens, lines = tokenize(source)
     nodes = []
@@ -950,7 +959,7 @@ def compile_file_arm64(src_path, asm_path):
     analyzer = Analyzer()
     main_stmts, main_slots, main_types = analyzer.analyze(nodes)
     cg = ArmCodegen(analyzer.functions, analyzer)
-    asm = cg.build(main_stmts, main_slots, main_types)
+    asm = cg.build(main_stmts, main_slots, main_types, macos_prefix=macos_prefix)
     with open(asm_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(asm)
     return asm

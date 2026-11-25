@@ -21,7 +21,12 @@ def cmd_build(args):
 
     target = args.target
     if target == "auto":
-        target = "pe" if sys.platform == "win32" else "elf"
+        if sys.platform == "win32":
+            target = "pe"
+        elif sys.platform == "darwin":
+            target = "macho"
+        else:
+            target = "elf"
 
     fmt = getattr(args, "format", "auto")
     if fmt == "auto":
@@ -34,9 +39,19 @@ def cmd_build(args):
     if not out_file:
         base = os.path.splitext(src_file)[0]
         if fmt == "shared":
-            out_file = f"{base}.dll" if target == "pe" else f"lib{base}.so"
+            if target == "pe":
+                out_file = f"{base}.dll"
+            elif target == "macho":
+                out_file = f"lib{base}.dylib"
+            else:
+                out_file = f"lib{base}.so"
         else:
-            out_file = f"{base}.exe" if target == "pe" else f"{base}.elf"
+            if target == "pe":
+                out_file = f"{base}.exe"
+            elif target == "macho":
+                out_file = f"{base}.macho"
+            else:
+                out_file = f"{base}.elf"
 
     asm_file = f"{os.path.splitext(src_file)[0]}.s"
 
@@ -59,12 +74,13 @@ def cmd_build(args):
     native_ok = False
     opt_level = getattr(args, "opt", False) or getattr(args, "_opt", False)
     arch = getattr(args, "arch", "x86_64")
+    macos = target == "macho"
     if arch == "arm64":
         # ponytail: the native bootstrap compiler (compiler.aic) has no ARM64
         # backend, so --arch arm64 always goes through the Python host codegen.
         from aic_codegen_arm64 import compile_file_arm64
         try:
-            compile_file_arm64(src_file, asm_file)
+            compile_file_arm64(src_file, asm_file, macos_prefix=macos)
         except Exception as e:
             print(f"[ERR] Host compilation failed: {e}")
             sys.exit(1)
@@ -93,7 +109,35 @@ def cmd_build(args):
             sys.exit(1)
 
     # 2. Package directly using zero-dependency emitters
-    if arch == "arm64":
+    if target == "macho":
+        # ponytail: Darwin has no free native syscall ABI for the libc helpers
+        # the codegen emits, so the Mach-O path binds libSystem via dyld
+        # (LC_DYLD_INFO_ONLY) and carries the macos_runtime bridge.
+        from tools.macos_runtime import MACOS_RUNTIME_ASM
+        with open(asm_file, "r", encoding="utf-8") as f:
+            asm_content = f.read()
+        import tools.aic_macho_emitter as macho
+        exports = []
+        if fmt == "shared":
+            from aic_codegen import Analyzer, tokenize, parse, read_source_with_imports
+            src = read_source_with_imports(src_file)
+            toks, lines = tokenize(src)
+            nodes = []
+            while toks:
+                nodes.append(parse(toks, lines))
+            an = Analyzer()
+            an.analyze(nodes)
+            exports = [f.name for f in an.functions.values()]
+            macho.build_dylib(asm_content, out_file, export_names=exports,
+                              runtime_asm=MACOS_RUNTIME_ASM)
+            print(f"[OK] Standalone AArch64 Mach-O dylib: {out_file} ({os.path.getsize(out_file):,} bytes, {len(exports)} exports)")
+        else:
+            macho.build_executable(asm_content, out_file, runtime_asm=MACOS_RUNTIME_ASM)
+            print(f"[OK] Standalone AArch64 Mach-O executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        if getattr(args, "header", False):
+            import tools.generate_header
+            tools.generate_header.generate_header(src_file, os.path.splitext(out_file)[0] + ".h")
+    elif arch == "arm64":
         import tools.aic_arm64_emitter as arm_emitter
         with open(asm_file, "r", encoding="utf-8") as f:
             asm_content = f.read()
@@ -193,18 +237,32 @@ def cmd_run(args):
 
     # Native compile & run
     base = os.path.splitext(src_file)[0]
-    out_file = f"{base}_run.exe" if sys.platform == "win32" else f"{base}_run.elf"
+    target = getattr(args, "target", "auto")
+    if target == "macho":
+        out_file = f"{base}_run.macho"
+    elif target == "pe" or sys.platform == "win32":
+        out_file = f"{base}_run.exe"
+    else:
+        out_file = f"{base}_run.elf"
     args.output = out_file
-    args.target = "auto"
+    args.target = target
     args.force_python = False
     args.keep_asm = False
     args._opt = getattr(args, "opt", False)
     args.arch = getattr(args, "arch", "x86_64")
+    if target == "macho":
+        args.arch = "arm64"
     cmd_build(args)
 
     try:
-        cmd = [os.path.abspath(out_file)] + extra
-        rc = subprocess.run(cmd).returncode
+        exe_path = os.path.abspath(out_file)
+        os.chmod(exe_path, 0o755)
+        if target == "macho" and sys.platform != "darwin":
+            print(f"[ERR] cannot execute a Mach-O binary on {sys.platform}; "
+                  f"built {out_file} for macOS arm64 only")
+            os.remove(out_file)
+            sys.exit(1)
+        rc = subprocess.run([exe_path] + extra).returncode
     finally:
         if os.path.exists(out_file):
             try: os.remove(out_file)
@@ -338,7 +396,7 @@ def main():
     p_build = subparsers.add_parser("build", help="Compile an .aic program to a standalone native binary")
     p_build.add_argument("input", help="Input .aic file")
     p_build.add_argument("-o", "--output", help="Output binary file path")
-    p_build.add_argument("--target", choices=["auto", "pe", "elf"], default="auto",
+    p_build.add_argument("--target", choices=["auto", "pe", "elf", "macho"], default="auto",
                          help="Target binary format: pe (Windows), elf (Linux), or auto (default)")
     p_build.add_argument("--format", choices=["auto", "exe", "shared", "obj"], default="auto",
                          help="Output form: exe (default), shared (.so/.dll), or obj (not yet)")
@@ -355,6 +413,8 @@ def main():
     p_run = subparsers.add_parser("run", help="Compile and run an .aic program natively")
     p_run.add_argument("input", help="Input .aic file")
     p_run.add_argument("--interp", action="store_true", help="Run via reference interpreter instead of native binary")
+    p_run.add_argument("--target", choices=["auto", "pe", "elf", "macho"], default="auto",
+                       help="Target binary format for the run build (default: auto)")
     p_run.add_argument("--arch", choices=["x86_64", "arm64"], default="x86_64",
                        help="Target machine architecture (default: x86_64)")
     p_run.add_argument("--opt", "-O1", action="store_true", help="Enable -O1 register allocation")
