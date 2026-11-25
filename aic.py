@@ -58,10 +58,18 @@ def cmd_build(args):
     _bridge = "tools/aic_wincrt_bridge.s" if _win_target else "tools/aic_linux_bridge.s"
     native_ok = False
     opt_level = getattr(args, "opt", False) or getattr(args, "_opt", False)
-    # ponytail: the native bootstrap compiler (compiler.aic) has no -O1 pass, so
-    # requesting -O1 must go through host codegen. Port the pass into
-    # compiler.aic only when the two-stage rollout says it's validated.
-    if aic_exe and not args.force_python and not opt_level:
+    arch = getattr(args, "arch", "x86_64")
+    if arch == "arm64":
+        # ponytail: the native bootstrap compiler (compiler.aic) has no ARM64
+        # backend, so --arch arm64 always goes through the Python host codegen.
+        from aic_codegen_arm64 import compile_file_arm64
+        try:
+            compile_file_arm64(src_file, asm_file)
+        except Exception as e:
+            print(f"[ERR] Host compilation failed: {e}")
+            sys.exit(1)
+        native_ok = True
+    elif aic_exe and not args.force_python and not opt_level:
         res = subprocess.run([aic_exe, src_file, asm_file, _bridge], capture_output=True, text=True)
         out_msg = (res.stderr or "") + "\n" + (res.stdout or "")
         if res.returncode == 0 and "[ERR :code" not in out_msg and os.path.exists(asm_file):
@@ -85,7 +93,20 @@ def cmd_build(args):
             sys.exit(1)
 
     # 2. Package directly using zero-dependency emitters
-    if fmt == "shared":
+    if arch == "arm64":
+        import tools.aic_arm64_emitter as arm_emitter
+        with open(asm_file, "r", encoding="utf-8") as f:
+            asm_content = f.read()
+        if fmt == "shared":
+            arm_emitter.build_shared_arm64_elf(asm_content, out_file)
+            print(f"[OK] Standalone AArch64 shared object: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        else:
+            arm_emitter.build_standalone_arm64_elf(asm_content, out_file)
+            print(f"[OK] Standalone AArch64 ELF64 executable: {out_file} ({os.path.getsize(out_file):,} bytes)")
+        if getattr(args, "header", False):
+            import tools.generate_header
+            tools.generate_header.generate_header(src_file, os.path.splitext(out_file)[0] + ".h")
+    elif fmt == "shared":
         # Shared objects always go through the pure-Python emitters (the
         # zero-dep invariant); gcc/MinGW aren't used here.
         if target == "pe":
@@ -178,6 +199,7 @@ def cmd_run(args):
     args.force_python = False
     args.keep_asm = False
     args._opt = getattr(args, "opt", False)
+    args.arch = getattr(args, "arch", "x86_64")
     cmd_build(args)
 
     try:
@@ -324,6 +346,8 @@ def main():
                          help="Generate a C header (.h) sidecar alongside the shared library")
     p_build.add_argument("--keep-asm", action="store_true", help="Keep intermediate .s file")
     p_build.add_argument("--force-python", action="store_true", help="Force Python compiler instead of native aic.exe")
+    p_build.add_argument("--arch", choices=["x86_64", "arm64"], default="x86_64",
+                         help="Target machine architecture (default: x86_64)")
     p_build.add_argument("-O1", "--opt", action="store_true", help="Enable -O1: linear scan register allocation")
     p_build.set_defaults(func=cmd_build)
 
@@ -331,6 +355,8 @@ def main():
     p_run = subparsers.add_parser("run", help="Compile and run an .aic program natively")
     p_run.add_argument("input", help="Input .aic file")
     p_run.add_argument("--interp", action="store_true", help="Run via reference interpreter instead of native binary")
+    p_run.add_argument("--arch", choices=["x86_64", "arm64"], default="x86_64",
+                       help="Target machine architecture (default: x86_64)")
     p_run.add_argument("--opt", "-O1", action="store_true", help="Enable -O1 register allocation")
     p_run.add_argument("extra_args", nargs=argparse.REMAINDER, help="Optional arguments passed to the program")
     p_run.set_defaults(func=cmd_run)
