@@ -39,12 +39,13 @@ def cmd_build(args):
     if not out_file:
         base = os.path.splitext(src_file)[0]
         if fmt == "shared":
+            stem = os.path.basename(base)
             if target == "pe":
                 out_file = f"{base}.dll"
             elif target == "macho":
-                out_file = f"lib{base}.dylib"
+                out_file = os.path.join(os.path.dirname(base), f"lib{stem}.dylib")
             else:
-                out_file = f"lib{base}.so"
+                out_file = os.path.join(os.path.dirname(base), f"lib{stem}.so")
         else:
             if target == "pe":
                 out_file = f"{base}.exe"
@@ -73,8 +74,8 @@ def cmd_build(args):
     _bridge = "tools/aic_wincrt_bridge.s" if _win_target else "tools/aic_linux_bridge.s"
     native_ok = False
     opt_level = getattr(args, "opt", False) or getattr(args, "_opt", False)
-    arch = getattr(args, "arch", "x86_64")
     macos = target == "macho"
+    arch = "arm64" if macos else getattr(args, "arch", "x86_64")
     if arch == "arm64":
         # ponytail: the native bootstrap compiler (compiler.aic) has no ARM64
         # backend, so --arch arm64 always goes through the Python host codegen.

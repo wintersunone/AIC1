@@ -95,7 +95,7 @@ def parse_macho(path):
 
 
 def check_trie(data, off, size, names):
-    """Walk the flat one-level trie; return the exported symbol names."""
+    """Walk Apple's export trie; return the exported symbol names."""
     end = off + size
     p = off
 
@@ -110,15 +110,36 @@ def check_trie(data, off, size, names):
                 return v, p
 
     seen = []
-    n, p = uleb(p)
-    for _ in range(n):
-        ln, p = uleb(p)
-        name = data[p:p + ln].decode()
-        p += ln
-        tl, p = uleb(p)
-        p += tl  # skip terminal payload
+    children = []
+
+    # root node
+    term_size, p = uleb(p)
+    assert term_size == 0, "root terminalSize must be 0"
+    child_count = data[p]; p += 1
+    assert child_count > 0
+    for _ in range(child_count):
+        # null-terminated edge label
+        start = p
+        while data[p] != 0:
+            p += 1
+        name = data[start:p].decode()
+        p += 1
+        node_off, p = uleb(p)
+        children.append((name, off + node_off))
         seen.append(name)
-    return seen, p < end
+
+    # every child offset must land inside the trie blob
+    for name, abs_off in children:
+        assert off < abs_off < end, f"{name} child offset {abs_off} out of range"
+        q = abs_off
+        tsize, q = uleb(q)
+        flags, q = uleb(q)
+        addr, q = uleb(q)
+        assert flags == 0, f"{name} terminal flags {flags}"
+        assert addr > 0, f"{name} address 0"
+        assert data[q] == 0, f"{name} terminal childCount not 0"
+
+    return seen, p <= end
 
 
 def check_segments(m):

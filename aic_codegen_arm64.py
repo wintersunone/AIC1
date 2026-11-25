@@ -792,7 +792,10 @@ aic_main:
         free = list(ARM_ALLOC_REGS)
         for v, _, _ in intervals:
             self.allocation[v] = free.pop(0) if free else None
-        self.reg_area = 8 * len([r for r in self.allocation.values() if r])
+        # stp pairs, so an odd register count pushes one extra (xzr) slot —
+        # must match compile_main or the slot area overlaps the saved regs
+        nregs = len([r for r in self.allocation.values() if r])
+        self.reg_area = 16 * ((nregs + 1) // 2)
 
         for s in fn.body_stmts:
             self.compile_stmt(s)

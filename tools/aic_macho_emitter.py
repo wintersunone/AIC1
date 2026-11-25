@@ -100,8 +100,7 @@ def bind_stream(binds):
     for seg, off, name in binds:
         out.append(0x40)                        # SET_SYMBOL_TRAILING_FLAGS_IMM
         out.extend(name.encode() + b"\x00")
-        out.append(0x70)                        # SET_SEGMENT_AND_OFFSET_ULEB
-        out.append(seg)
+        out.append(0x70 | seg)                  # SET_SEGMENT_AND_OFFSET_ULEB | seg
         out.extend(_uleb(off))
         out.append(0x90)                        # DO_BIND
     out.append(0x00)                            # DONE
@@ -109,25 +108,48 @@ def bind_stream(binds):
 
 
 def export_trie(entries):
-    """entries: {symbol: address}. Flat one-level trie."""
+    """Apple export trie.
+
+    Node layout: terminalSize (ULEB), childCount (u8), then per child a
+    null-terminated edge string followed by ULEB128 offset of the child node.
+    The root's terminal payload is empty, so terminalSize = 0.
+    """
     if not entries:
         return b""
     leaves = sorted(entries.items())
-    out = bytearray(_uleb(len(leaves)))
-    for sym, addr in leaves:
-        term = _uleb(0) + _uleb(addr) + b"\x00"
-        out.extend(_uleb(len(sym.encode())))
-        out.extend(sym.encode())
-        out.extend(_uleb(len(term)))
-        out.extend(term)
-    out.append(0x00)
-    return bytes(out)
+
+    # Offsets of terminal nodes are root_table_size + running body size, and
+    # root_table_size itself depends on the ULEB width of those offsets, so
+    # settle it with a fixed-point iteration (converges in 1-2 rounds).
+    root_len = 2
+    while True:
+        body = bytearray()
+        offsets = []
+        for sym, addr in leaves:
+            offsets.append(root_len + len(body))
+            payload = _uleb(0) + _uleb(addr)          # flags|0, address
+            body.append(len(payload))                 # terminalSize
+            body.extend(payload)
+            body.append(0x00)                         # childCount of terminal
+        total = 2 + sum(len(sym.encode()) + 1 + len(_uleb(o))
+                        for (sym, _), o in zip(leaves, offsets))
+        if total == root_len:
+            break
+        root_len = total
+
+    root = bytearray(b"\x00")                        # terminalSize = 0
+    root.append(len(leaves))                          # childCount
+    for (sym, _), o in zip(leaves, offsets):
+        root.extend(sym.encode())
+        root.append(0x00)
+        root.extend(_uleb(o))
+    return bytes(root) + bytes(body)
 
 
-def _code_directory(code_limit, hashes, ident, exec_seg_limit):
+def _code_directory(code_limit, hashes, ident, exec_seg_limit, exec_seg_flags=1):
     magic, version = 0xFADE0C02, 0x20400
     hash_type, hash_size, page_size = 2, 32, 12
-    n_special, n_code = 2, len(hashes)
+    n_special, n_code = 0, len(hashes)
     ident_off = 88
     hash_off = ident_off + len(ident) + 1 + n_special * hash_size
     sig_len = hash_off + n_code * hash_size
@@ -137,11 +159,11 @@ def _code_directory(code_limit, hashes, ident, exec_seg_limit):
         hash_off, ident_off, n_special, n_code,
         code_limit, hash_size, hash_type, 0, page_size,
         0, 0, 0, 0,
-        0, 0, exec_seg_limit, 1,
+        0, 0, exec_seg_limit, exec_seg_flags,
     )
     assert len(header) == 88, len(header)
     return (header + ident.encode() + b"\x00"
-            + b"\x00" * (n_special * hash_size) + b"".join(hashes))
+            + b"".join(hashes))
 
 
 def _super_blob(blobs):
@@ -202,12 +224,13 @@ def build(asm_text, output_path, kind="exe", runtime_asm="", export_names=None):
 
     ident = os.path.splitext(os.path.basename(output_path))[0]
 
-    bind_names = sorted(l for l in asm.labels if l.startswith("sym_"))
-    # bind offsets are relative to the start of __DATA (segment-relative)
-    got = [(2 if kind == "exe" else 1, len(raw_data) + 8 * i, l[4:])
-           for i, l in enumerate(bind_names)]
+    # macos_runtime.py already emits a .quad 0 GOT slot per sym_* label, so
+    # bind at that slot's real __DATA offset (segment-relative). Do not append
+    # extra zeros -- that would leave the slot at 0 and dyld would jump to NULL.
+    got = [(2 if kind == "exe" else 1, asm.labels[l][1], "_" + l[4:])
+           for l in sorted(asm.labels) if l.startswith("sym_")]
     bind_bytes = bind_stream(got)
-    data_blob = raw_data + b"\x00" * (8 * len(got))
+    data_blob = raw_data
 
     exports = {}
     if kind == "dylib":
@@ -235,7 +258,8 @@ def build(asm_text, output_path, kind="exe", runtime_asm="", export_names=None):
     sig_off = link_off + len(bind_bytes) + len(trie)
     n_code = (sig_off + 4095) // 4096
     sig_len = len(_super_blob([_code_directory(sig_off, [b"\x00" * 32] * n_code,
-                                               ident, text_len)]))
+                                               ident, text_vmsize,
+                                               1 if kind == "exe" else 0)]))
     link_file = (sig_len + len(bind_bytes) + len(trie) + PAGE - 1) & ~(PAGE - 1)
     entry = text_off + asm.labels["_start_macho"][1]
 
@@ -276,7 +300,8 @@ def build(asm_text, output_path, kind="exe", runtime_asm="", export_names=None):
 
     hashes = [hashlib.sha256(buf[i:i + 4096]).digest()
               for i in range(0, sig_off, 4096)]
-    blob = _super_blob([_code_directory(sig_off, hashes, ident, text_len)])
+    blob = _super_blob([_code_directory(sig_off, hashes, ident, text_vmsize,
+                                       1 if kind == "exe" else 0)])
     assert len(blob) == sig_len, (len(blob), sig_len)
     buf.extend(blob)
     buf.extend(b"\x00" * (link_off + link_file - len(buf)))
