@@ -1,0 +1,26 @@
+name: Mach-O ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Python/host
+        run: |
+          python3 --version
+          uname -m
+
+      - name: Structural + native Mach-O tests
+        run: python3 tests/test_macos_arm64.py
+
+      - name: Run real programs end to end
+        run: |
+          python3 aic.py build examples/02_algorithms.aic --target macho -o /tmp/algo.macho
+          chmod +x /tmp/algo.macho
+          codesign -v /tmp/algo.macho
+          /tmp/algo.macho
+          python3 aic.py run examples/01_basics.aic --target macho
