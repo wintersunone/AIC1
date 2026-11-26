@@ -185,19 +185,20 @@ def score_aic(code, task):
             b = subprocess.run(["python3", os.path.join(BASE, "aic.py"), "build", p, "-o", elf],
                                capture_output=True, text=True, cwd=BASE, timeout=BUILD_TIMEOUT)
         except subprocess.TimeoutExpired:
-            return dict(compiled=False, ran=False, output="", cat="timeout", silent=False)
+            return dict(compiled=False, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
         outtext = (b.stdout or "") + (b.stderr or "")
         if b.returncode != 0:
             m = re.search(r":kind (\w+)", outtext)
-            return dict(compiled=False, ran=False, output="", cat=(m.group(1) if m else "CODEGEN"), silent=False)
+            return dict(compiled=False, ran=False, output="", cat=(m.group(1) if m else "CODEGEN"),
+                        silent=False, compiler_stderr=outtext.strip())
         try:
             r = subprocess.run([elf], capture_output=True, timeout=RUN_TIMEOUT,
                                input=((sd or "") + "").encode(), cwd=d)
         except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False)
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
         output = r.stdout.decode(errors="replace")
         if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False)
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
         ok = (output == task["expected"])
         return dict(compiled=True, ran=True, output=output, cat="none" if ok else "none",
                     silent=(not ok))
@@ -211,17 +212,17 @@ def score_c(code, task):
             open(os.path.join(d, FIXED_FILE), "w").write(FIXED_FILE_CONTENT)
         c = subprocess.run(["gcc", "-O2", "-o", o, p], capture_output=True, text=True, timeout=BUILD_TIMEOUT)
         if c.returncode != 0:
-            return dict(compiled=False, ran=False, output="", cat="CODEGEN", silent=False)
+            return dict(compiled=False, ran=False, output="", cat="CODEGEN", silent=False, compiler_stderr="")
         try:
             r = subprocess.run([o], capture_output=True, timeout=RUN_TIMEOUT,
                                input=((sd or "") + "").encode(), cwd=d)
         except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False)
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
         output = r.stdout.decode(errors="replace")
         if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False)
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
         ok = (output == task["expected"])
-        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok))
+        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
 
 def score_py(code, task):
     sd = FIXED_STDIN if task["uses_stdin"] else None
@@ -232,15 +233,15 @@ def score_py(code, task):
             r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                                timeout=BUILD_TIMEOUT + RUN_TIMEOUT, input=(sd or ""), cwd=d)
         except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False)
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
         outtext = r.stderr or ""
         if "SyntaxError" in outtext or "IndentationError" in outtext:
-            return dict(compiled=False, ran=False, output=(r.stdout or ""), cat="PARSE", silent=False)
+            return dict(compiled=False, ran=False, output=(r.stdout or ""), cat="PARSE", silent=False, compiler_stderr=outtext.strip())
         output = r.stdout or ""
         if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False)
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
         ok = (output == task["expected"])
-        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok))
+        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
 
 SCORE = {"aic": score_aic, "c": score_c, "python": score_py}
 
@@ -276,7 +277,7 @@ def process_cell(task, lang, condition, sample_index):
             "condition": condition, "model": MODEL, "sample_index": sample_index,
             "compiled_or_ran": False, "passed_functional_test": False,
             "error_category": "llm_failed", "silent_wrong_output": False,
-            "raw_output": "", "raw_candidate_code": "",
+            "raw_output": "", "raw_candidate_code": "", "compiler_stderr": "",
         }
     else:
         res = SCORE[lang](code, task)
@@ -288,6 +289,7 @@ def process_cell(task, lang, condition, sample_index):
             "error_category": res["cat"] if not (res["ran"] and res["output"] == task["expected"]) else "none",
             "silent_wrong_output": res["silent"],
             "raw_output": res["output"], "raw_candidate_code": code,
+            "compiler_stderr": res.get("compiler_stderr", ""),
         }
     with _lock:
         with open(OUT, "a") as f:

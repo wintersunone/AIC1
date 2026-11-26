@@ -94,6 +94,7 @@
 #           (confirmed: `[add 3]` against a 2-param `add` prints "3b").
 #   Pass 3 (codegen): emit x86-64 for main, then for each function.
 
+import difflib
 import os
 from compiler import tokenize, parse, AICError, Symbol, StrLit
 
@@ -121,6 +122,27 @@ _LIBC_OPS = {"O": 2, "Z": 1, "R": 2, "K": 2, "X": 1,               # calls libc/
 _LIBC_STR_RETURN = {"H", "R", "N", "A", "I"}                      # the rest return INT
 _RESERVED_NAMES = (_STMT_OPS | _CMP_OP_NAMES | set(_BYTE_OPS) | set(_WORD_OPS)
                     | set(_LIBC_OPS) | {"^", "§", ":"})
+
+# Actionable hints for the operators LLMs habitually invent. Values are the
+# suggested replacement; the message builder below owns the wording.
+_OP_HINTS = {
+    "=":     "'=' is an assignment/comparison in other languages. AIC uses "
+             "'!' to assign and '==' to compare",
+    "mod":   "'mod' does not exist. Use the '%' operator, e.g. [% a b]",
+    "sqrt":  "'sqrt' is not a built-in. Import lib/math.aic and use [math_sqrt x]",
+    "abs":   "'abs' is not a built-in. Use [math_abs x] from lib/math.aic",
+    "pow":   "'pow' is not a built-in. Use [math_pow base exp]",
+    "//":    "'//' does not exist. Use '/' with two integers for division, "
+             "or [/ s start end] for a slice",
+    "and":   "'and' does not exist. Use '&&'",
+    "or":    "'or' does not exist. Use '||'",
+    "not":   "'not' does not exist. Use '!' as the boolean negation of a "
+             "condition, e.g. [? [! cond] ...]",
+    "print": "'print' does not exist. Use [. value] (it adds the newline)",
+    "len":   "'len' does not exist. Use [L s] for string length",
+    "inc":   "'inc' does not exist. Use [! v [+ v 1]]",
+    "def":   "'def' does not exist. Define functions with [: name [params] [D body]]",
+}
 _ARG_REGS = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
 _MAX_PARAMS = 64
 
@@ -133,6 +155,53 @@ class CodegenError(Exception):
 
 def _line_of(node):
     return getattr(node, "line", "?")
+
+
+# lib module -> public function names. Used to turn "op not found" into
+# "you forgot [import ...]", which is the single most common LLM mistake.
+_LIB_INDEX = {
+    "lib/string.aic": ["str_len", "str_char_at", "str_eq", "str_cmp", "str_cat",
+                       "str_find", "str_starts_with", "str_ends_with",
+                       "str_from_int", "str_to_int", "str_quote"],
+    "lib/map.aic": ["hash_str", "map_new", "map_len", "map_get", "map_contains",
+                    "map_set", "map_keys", "map_values", "map_get_ptr", "map_set_ptr"],
+    "lib/arena.aic": ["arena_new", "arena_buffer", "arena_offset", "arena_cap",
+                      "arena_alloc", "arena_alloc_words", "arena_reset",
+                      "arena_used", "arena_remaining"],
+    "lib/json.aic": ["json_null", "json_bool", "json_int", "json_str", "json_arr",
+                     "json_obj", "json_tag", "json_get_int", "json_get_bool",
+                     "json_get_str", "json_arr_push", "json_arr_get", "json_arr_len",
+                     "json_obj_set", "json_obj_get", "json_obj_contains",
+                     "json_parse", "json_stringify"],
+    "lib/vec.aic": ["vec_new", "vec_len", "vec_cap", "vec_push", "vec_get", "vec_set"],
+    "lib/math.aic": ["math_abs", "math_min", "math_max", "math_clamp", "math_pow",
+                     "math_gcd", "math_lcm", "math_sqrt"],
+}
+_NAME_TO_LIB = {n: m for m, ns in _LIB_INDEX.items() for n in ns}
+
+
+def _unknown_op_message(op, line, functions=None, imported_libs=()):
+    """One actionable diagnostic for an operator the slice does not implement."""
+    hint = _OP_HINTS.get(op)
+    if hint:
+        return f"Line {line}: {hint}"
+    lib = _NAME_TO_LIB.get(op)
+    if lib:
+        siblings = [n for n in _LIB_INDEX[lib] if functions and n in functions]
+        if siblings:
+            return (f"Line {line}: '{op}' is not defined, but {lib} IS imported "
+                    f"(available: {', '.join(sorted(siblings))}) - check the spelling")
+        return f"Line {line}: '{op}' is from {lib} - add [import \"{lib}\"] first"
+    # near-match against real operators and, when available, user functions
+    known = sorted(_RESERVED_NAMES)
+    if functions:
+        known += sorted(functions)
+    close = difflib.get_close_matches(op, known, n=1, cutoff=0.55)
+    if close:
+        return (f"Line {line}: op '{op}' has no native codegen yet - "
+                f"did you mean '{close[0]}'?")
+    return (f"Line {line}: op '{op}' has no native codegen yet "
+            f"(unknown operator; see AIC_SPECIFICATION.md section 4 for the operator set)")
 
 
 def _op_name(node0):
@@ -357,10 +426,9 @@ class Analyzer:
                     return None
                 if node.name in self.functions:
                     return None
-                raise CodegenError(
-                    f"Line {_line_of(node)}: op '{node.name}' has no native "
-                    f"codegen support yet in this slice"
-                )
+                raise CodegenError(_unknown_op_message(
+                    node.name, _line_of(node), self.functions,
+                    getattr(self, "imported_libs", ())))
             if node.name in self.constants:
                 return INT
             if node.name not in declared:
@@ -1119,7 +1187,7 @@ class Codegen:
             self.emit(f"    {_CMP_SETcc[op]}    %al")
             self.emit("    movzbq  %al, %rax")
         else:
-            raise CodegenError(f"Line {_line_of(op_node)}: op '{op}' has no native codegen yet")
+            raise CodegenError(_unknown_op_message(op, _line_of(op_node)))
 
     # --- byte read/write: pure register math, no call, safe anywhere -------
     def compile_byte_op(self, op, node):

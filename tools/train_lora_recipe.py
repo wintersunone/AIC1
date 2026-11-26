@@ -82,9 +82,9 @@ def train(args):
     try:
         import torch
         from datasets import load_dataset
-        from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
-        from peft import LoraConfig, get_peft_model
-        from trl import SFTTrainer
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import LoraConfig
+        from trl import SFTConfig, SFTTrainer
     except ImportError as e:
         print(f"[ERR] Missing machine learning dependencies: {e}")
         print("Please install requirements:\n  pip install torch transformers datasets peft trl accelerate bitsandbytes")
@@ -94,7 +94,7 @@ def train(args):
     print(f"Starting LoRA Fine-Tuning: {args.model}")
     print("=" * 70)
 
-    # 1. Load Tokenizer & Model
+    # 1. Tokenizer & model
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -103,28 +103,31 @@ def train(args):
         args.model,
         torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
         device_map="auto",
-        trust_remote_code=True
+        trust_remote_code=True,
     )
 
-    # 2. Configure LoRA
+    # 2. LoRA config -- passed to SFTTrainer, NOT applied via get_peft_model.
+    #    Wrapping with get_peft_model AND passing peft_config double-wraps the
+    #    adapters, which breaks save_pretrained and inflates trainable params.
     peft_config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=0.05,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
         bias="none",
         task_type="CAUSAL_LM",
     )
-    model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
 
-    # 3. Load Dataset
-    dataset = load_dataset("json", data_files={"train": args.dataset})
-    if "messages" not in dataset["train"].column_names:
-        dataset = dataset.map(lambda ex: {"messages": format_entry_as_messages(ex)})
+    # 3. Dataset -- normalise every entry to TRL's conversational "messages" schema
+    raw = load_dataset("json", data_files={"train": args.dataset})
+    dataset = raw["train"].map(lambda ex: {"messages": format_entry_as_messages(ex)})
+    dataset = dataset.remove_columns(
+        [c for c in dataset.column_names if c != "messages"])
 
-    # 4. Training Arguments
-    training_args = TrainingArguments(
+    # 4. Training config (SFTConfig replaces TrainingArguments + SFTTrainer kwargs)
+    bf16_ok = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    sft_config = SFTConfig(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
@@ -134,20 +137,20 @@ def train(args):
         warmup_ratio=0.05,
         logging_steps=5,
         save_strategy="epoch",
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
-        report_to="none"
+        fp16=not bf16_ok,
+        bf16=bf16_ok,
+        report_to="none",
+        max_length=args.max_seq_len,
+        packing=False,
     )
 
-    # 5. Launch SFTTrainer
+    # 5. Trainer -- conversational dataset, no dataset_text_field
     trainer = SFTTrainer(
         model=model,
-        train_dataset=dataset["train"],
+        args=sft_config,
+        train_dataset=dataset,
+        processing_class=tokenizer,
         peft_config=peft_config,
-        dataset_text_field="messages",
-        max_seq_length=args.max_seq_len,
-        tokenizer=tokenizer,
-        args=training_args,
     )
 
     print("[*] Training started...")
@@ -158,6 +161,68 @@ def train(args):
     trainer.model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
     print(f"\n[OK] Model fine-tuning complete! Weights saved to: {args.output_dir}")
+
+def smoke_test(args):
+    """Build everything, then stop before the first training step.
+
+    Verifies: dataset loads, `messages` formatting works, SFTConfig accepts the
+    kwargs, SFTTrainer initialises with the peft_config (no double wrap), and
+    the trainer can form at least one batch.
+    """
+    validate_dataset(args.dataset)
+    try:
+        import torch
+        from datasets import load_dataset
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import LoraConfig
+        from trl import SFTConfig, SFTTrainer
+    except ImportError as e:
+        print(f"[ERR] Missing machine learning dependencies: {e}")
+        print("  pip install torch transformers datasets peft trl accelerate bitsandbytes")
+        return 1
+
+    print(f"[*] smoke-test: tokens/model = {args.model}")
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+
+    peft_config = LoraConfig(
+        r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=0.05,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        bias="none", task_type="CAUSAL_LM",
+    )
+
+    raw = load_dataset("json", data_files={"train": args.dataset})
+    dataset = raw["train"].map(lambda ex: {"messages": format_entry_as_messages(ex)})
+    dataset = dataset.remove_columns([c for c in dataset.column_names if c != "messages"])
+    sample = dataset[0]["messages"]
+    print(f"[OK] dataset: {len(dataset)} rows; first message roles = {[m['role'] for m in sample]}")
+
+    bf16_ok = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    cfg = SFTConfig(
+        output_dir=args.output_dir, num_train_epochs=1,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=1, learning_rate=args.learning_rate,
+        logging_steps=1, save_strategy="no", report_to="none",
+        max_length=args.max_seq_len, packing=False,
+        fp16=not bf16_ok, bf16=bf16_ok,
+    )
+    trainer = SFTTrainer(model=model, args=cfg, train_dataset=dataset,
+                          processing_class=tokenizer, peft_config=peft_config)
+    total = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
+    print(f"[OK] trainer initialised; trainable params = {total:,}")
+    batch = next(iter(trainer.get_train_dataloader()))
+    print(f"[OK] first batch keys = {sorted(batch.keys())}, shape = {tuple(batch['input_ids'].shape)}")
+    print("[OK] smoke test passed — no training was run.")
+    return 0
+
 
 def main():
     parser = argparse.ArgumentParser(description="Turnkey LoRA Fine-Tuning Recipe for AIC")
@@ -172,10 +237,15 @@ def main():
     parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha scaling factor")
     parser.add_argument("--max_seq_len", type=int, default=2048, help="Maximum sequence token length")
     parser.add_argument("--dry-run", action="store_true", help="Validate dataset and config without running training")
+    parser.add_argument("--smoke-test", action="store_true",
+                        help="Load model+dataset, build the trainer, then exit before training "
+                             "(catches API/wiring mistakes without spending GPU hours)")
 
     args = parser.parse_args()
     if args.dry_run:
         run_dry_run(args)
+    elif args.smoke_test:
+        smoke_test(args)
     else:
         train(args)
 

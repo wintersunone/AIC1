@@ -17,8 +17,8 @@ Traditional languages (C, C++, Rust, Python) were optimized for human visual aes
 
 **AIC** eliminates these failure modes by design:
 - **100% Unambiguous S-Expression Prefix Syntax**: Every expression is explicitly delimited by square brackets `[op arg1 arg2 ...]`. Precedence is purely structural and explicit.
-- **Single-BPE Token Alignment**: Delimiters and operators align cleanly across modern Byte-Pair Encoding (BPE) vocabularies.
-- **Zero External Toolchain Dependencies**: Direct machine code generation from assembly into standalone **Windows PE32+** (`.exe`), **Linux ELF64** (x86-64 and ARM64 `.elf`/`.so`), and **macOS Apple Silicon Mach-O ARM64** (`.macho`/`.dylib`, ad-hoc signed) without requiring GCC, Clang, GNU binutils, glibc, Xcode, `ld64`, or `codesign`.
+- **Deterministic Delimiters, Higher Token Cost**: Every operator is a whole bracketed token, so there is no multi-token operator fragmentation — but measured (tiktoken cl100k/o200k over the 30 canonical tasks) AIC costs **~2.0x the tokens of C and ~3.8x Python**. The syntax is predictable, it is not token-cheap; see `benchmarks/model_bench/measure_tokens.py`.
+- **Zero external C toolchain dependencies** (no GCC, Clang, LLVM, or binutils; Python 3.8+ drives the CLI and emitters): direct machine code generation into standalone **Windows PE32+** (`.exe`), **Linux ELF64** (x86-64 and ARM64 `.elf`/`.so`), and **macOS Apple Silicon Mach-O ARM64** (`.macho`/`.dylib`, ad-hoc signed).
 - **Bitwise Fixed-Point Self-Hosting Closure**: The self-hosted compiler (`compiler.aic`) compiling itself produces bitwise identical machine code across all generations:
   $$\text{Gen0.s} \equiv \text{Gen1.s} \equiv \text{Gen2.s} \equiv \text{GenPE.s} \quad (725,689\text{ bytes})$$
 
@@ -44,11 +44,11 @@ graph TD
 
 | Feature | AIC (AI Compiler) | C (C99/C11) | Rust (2021) | Python 3.11 | WebAssembly |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Syntax Predictability** | **100% Unambiguous Prefix** | Ambiguous Infix | Complex Infix & Lifetimes | Indentation Sensitive | Stack / S-Expr |
-| **BPE Token Efficiency** | **1-to-1 Delimiter Match** | Fragmented Operators | Fragmented Generics | Indent Token Spikes | Bytecode / Text |
-| **External Dependencies** | **0 (Direct PE/ELF Emitters)** | Binutils, Linker, libc | Cargo, LLVM, libc | Python Runtime (30MB) | VM / Browser Engine |
+| **Syntax Predictability** | **Unambiguous prefix (no precedence rules)** | Ambiguous infix | Complex infix & lifetimes | Indentation sensitive | Stack / S-Expr |
+| **BPE Token Efficiency** | **No operator fragmentation; ~2x C / ~3.8x Python tokens** | Fragmented operators | Fragmented generics | Indent token spikes | Bytecode / text |
+| **External Dependencies** | **0 C toolchain (PE/ELF/Mach-O emitters; Python 3.8+ for the CLI)** | Binutils, Linker, libc | Cargo, LLVM, libc | Python runtime (~30 MB) | VM / Browser engine |
 | **Binary Output Size** | **8.7 KB Standalone** | 15–50 KB (dynamic) | 300 KB–3 MB | N/A (Bytecode) | 5–50 KB |
-| **Execution Speed** | **Near-C (11x–29x vs Python)** | Baseline 1.0x | ~1.0x | 15x–30x Slower | ~1.5x–2.5x of C |
+| **Execution Speed** | **2.4x–5.5x of GCC -O2 (11x–29x faster than Python)** | Baseline 1.0x | ~1.0x | 15x–30x slower | ~1.5x–2.5x of C |
 | **Self-Hosting Closure** | **Bitwise 0-Diff (18 Stages)** | Non-deterministic | Complex Multi-stage | Non-self-hosting | N/A |
 | **Target Audience** | **AI Models & Systems Coders** | Humans | Humans | Humans | Web Browsers |
 
@@ -248,6 +248,9 @@ python aic.py agent "Write an integer square root function using Newton's method
 ```
 It runs up to 5 iterations, feeding typed `[ERR :code ...]` diagnostics back to the model, so a broken first attempt self-corrects into a compiling artifact (typically 1–2 iterations, ~1.2 s total in the deterministic test). Test: `python3 tests/test_agent_zero.py`.
 
+> [!WARNING]
+> **Agent Zero executes LLM-generated binaries on your machine.** `agent/sandbox.py` compiles and runs model output locally with a 2-second timeout. That bounds runaway loops but is **not** a security boundary. Run it inside a container or VM before accepting prompts or models you do not trust — a malicious candidate can still read/write files and open sockets within the timeout.
+
 ### Milestone 4 — Cross-Platform ARM64 & macOS
 `--arch arm64` targets Linux AArch64 (ELF64 executables and `.so`, raw `svc #0` syscalls, zero libc). `--target macho` targets macOS Apple Silicon Mach-O ARM64 (`.macho` and `.dylib`, ad-hoc SHA-256 signed, dyld-bound libSystem) — no Xcode, `clang`, `ld64`, or `codesign` anywhere. Both backends emit instruction streams byte-identical to the x86-64 path on the canonical suites.
 ```bash
@@ -261,7 +264,19 @@ Measured on `qwen3.8-27b-sglang` across 900 samples: the stock prompt produced A
 python3 benchmarks/model_bench/eval_agent_zero.py --iters 5
 # pass@1: 19/30 = 63.3%   avg iters 3.43   (tier 1 62.5%, tier 2 62.5%, tier 3 75.0%, tier 4 50.0%)
 ```
-Progression: **0.33%** (stock prompt, single shot) -> **40.0%** (parity prompt, single shot) -> **63.3%** (parity prompt + 5-iteration reflection). These are single-model, canonical-suite numbers, not a claim of general LLM competence.
+Progression: **0.33%** (stock prompt, single shot) -> **40.0%** (parity prompt, single shot) -> **63.3%** (parity prompt + 5-iteration reflection).
+
+**Token cost, measured** (`benchmarks/model_bench/measure_tokens.py`, tiktoken `cl100k_base`; `o200k_base` gives the same ratios):
+
+| Tier | AIC | C | Python | AIC/C | AIC/Py |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 87.1 | 54.9 | 29.5 | 1.59x | 2.95x |
+| 2 | 106.1 | 50.0 | 20.8 | 2.12x | 5.11x |
+| 3 | 148.0 | 46.2 | 38.2 | 3.20x | 3.87x |
+| 4 | 47.3 | 45.5 | 14.3 | 1.04x | 3.30x |
+| **All 30** | **100.5** | **49.4** | **26.5** | **2.03x** | **3.80x** |
+
+AIC uses fewer tokens than C on only 4 of 30 tasks, and never fewer than Python. The design win is **predictability** (no operator fragmentation, no precedence ambiguity), not token economy. These are single-model, canonical-suite numbers, not a claim of general LLM competence.
 
 ---
 
@@ -281,7 +296,7 @@ Below is an empirical execution time benchmark comparing **AIC (Native standalon
 ### Benchmark Takeaways
 1. **11x to 29x Faster Than Python**: Native machine code compilation completely bypasses the CPython bytecode dispatch loop and reference counting overhead.
 2. **Outperforms Node.js (V8 JIT) on Recursion, Memory Throughput, and Sorting**: Standalone AIC binaries (8.7 KB) start up instantaneously with zero runtime warmup latency, beating Google V8 JIT on 3 of 4 benchmarks.
-3. **Within 2x–4x of GCC `-O2`**: AIC achieves near-C execution performance from pure single-pass machine code generation with zero reliance on LLVM or heavyweight optimization passes.
+3. **2.4x–5.5x of GCC `-O2`**: AIC is 11x–29x faster than Python but still 2.4x–5.5x slower than GCC -O2. The residual is the expression push/pop operand stack, not variable round-trips.
 4. **Microscopic Executable Footprint**: Unlike Node.js (~70 MB runtime) or Python (~30 MB runtime), AIC produces **8.7 KB** standalone self-contained executables with zero dependencies.
 
 To reproduce these benchmarks on your system:
@@ -362,3 +377,19 @@ To train modern open-weights foundation models (e.g. Qwen 2.5 Coder, Llama 3.1, 
 ## Reference & Specification
 For the formal grammar, token-level invariants, memory model, calling conventions, and few-shot fine-tuning prompts, consult the [AIC Language Specification](AIC_SPECIFICATION.md).
 
+
+---
+
+## License & Citation
+
+Released under the **MIT License** — see [`LICENSE`](LICENSE).
+
+```bibtex
+@software{aic_ai_compiler_2026,
+  author  = {wintersunone},
+  title   = {AIC (AI Compiler / AI C): A Self-Hosting Zero-Toolchain Systems Language},
+  year    = {2026},
+  url     = {https://github.com/wintersunone/AIC1},
+  license = {MIT}
+}
+```

@@ -55,7 +55,7 @@ python aic.py run generated_code.aic
 
 ## Phase 2: Supervised Fine-Tuning (SFT) with LoRA
 
-Fine-tuning an open-source model allows it to generate AIC natively with zero prompting overhead and 100% syntactic reliability.
+Fine-tuning an open-source model lets it generate AIC natively with far less prompting overhead. It is NOT 100% reliable without training: the measured baseline is **0.33% pass@1 (stock prompt) rising to 40.0% with prompt parity, and 63.3% with Agent Zero's 5-iteration reflection loop**. Treat fine-tuning as a further improvement on that curve, not a guarantee.
 
 ### Recommended Base Models
 - **`Qwen/Qwen2.5-Coder-7B-Instruct`** (Recommended best performance/compute ratio)
