@@ -818,12 +818,14 @@ aic_main:
                 argcopy.append(f"    ldr x9, [x29, #{src}]")
                 argcopy.append(f"    stur x9, [x29, #{off}]")
 
+        argcopy_asm = "\n".join(argcopy)  # <--- 1. Pull it out here!
+
         return f"""\
 {fn.label}:
     stp x29, x30, [sp, #-16]!
     mov x29, sp
 {push}    {self._sub_sp(frame)}
-{"\n".join(argcopy)}
+{argcopy_asm}
 {self._zeroinit(fn.slots, set(fn.params))}
 {body}
     mov x0, #0
