@@ -171,79 +171,14 @@ def _run_bin(binpath, cwd, stdin_data, timeout=RUN_TIMEOUT):
     r = subprocess.run([binpath], capture_output=True, timeout=timeout, input=inp, cwd=cwd)
     return r.returncode, r.stdout.decode(errors="replace")
 
-def score_aic(code, task):
-    sd = FIXED_STDIN if task["uses_stdin"] else None
-    with tempfile.TemporaryDirectory() as d:
-        p = os.path.join(d, "prog.aic")
-        open(p, "w").write(code)
-        # ensure fixed input file in run cwd
-        if task["uses_file"]:
-            open(os.path.join(d, FIXED_FILE), "w").write(FIXED_FILE_CONTENT)
-        # build from project root so lib/ imports resolve
-        elf = os.path.join(d, "prog.elf")
-        try:
-            b = subprocess.run(["python3", os.path.join(BASE, "aic.py"), "build", p, "-o", elf],
-                               capture_output=True, text=True, cwd=BASE, timeout=BUILD_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            return dict(compiled=False, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
-        outtext = (b.stdout or "") + (b.stderr or "")
-        if b.returncode != 0:
-            m = re.search(r":kind (\w+)", outtext)
-            return dict(compiled=False, ran=False, output="", cat=(m.group(1) if m else "CODEGEN"),
-                        silent=False, compiler_stderr=outtext.strip())
-        try:
-            r = subprocess.run([elf], capture_output=True, timeout=RUN_TIMEOUT,
-                               input=((sd or "") + "").encode(), cwd=d)
-        except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
-        output = r.stdout.decode(errors="replace")
-        if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
-        ok = (output == task["expected"])
-        return dict(compiled=True, ran=True, output=output, cat="none" if ok else "none",
-                    silent=(not ok))
+def task_file(task):
+    """Per-task input file name/content (held-out tasks carry their own)."""
+    name = task.get("fixed_file") or FIXED_FILE
+    content = task.get("fixed_file_content")
+    if content is None:
+        content = FIXED_FILE_CONTENT
+    return name, content
 
-def score_c(code, task):
-    sd = FIXED_STDIN if task["uses_stdin"] else None
-    with tempfile.TemporaryDirectory() as d:
-        p = os.path.join(d, "prog.c"); o = os.path.join(d, "prog")
-        open(p, "w").write(code)
-        if task["uses_file"]:
-            open(os.path.join(d, FIXED_FILE), "w").write(FIXED_FILE_CONTENT)
-        c = subprocess.run(["gcc", "-O2", "-o", o, p], capture_output=True, text=True, timeout=BUILD_TIMEOUT)
-        if c.returncode != 0:
-            return dict(compiled=False, ran=False, output="", cat="CODEGEN", silent=False, compiler_stderr="")
-        try:
-            r = subprocess.run([o], capture_output=True, timeout=RUN_TIMEOUT,
-                               input=((sd or "") + "").encode(), cwd=d)
-        except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
-        output = r.stdout.decode(errors="replace")
-        if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
-        ok = (output == task["expected"])
-        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
-
-def score_py(code, task):
-    sd = FIXED_STDIN if task["uses_stdin"] else None
-    with tempfile.TemporaryDirectory() as d:
-        if task["uses_file"]:
-            open(os.path.join(d, FIXED_FILE), "w").write(FIXED_FILE_CONTENT)
-        try:
-            r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                               timeout=BUILD_TIMEOUT + RUN_TIMEOUT, input=(sd or ""), cwd=d)
-        except subprocess.TimeoutExpired:
-            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
-        outtext = r.stderr or ""
-        if "SyntaxError" in outtext or "IndentationError" in outtext:
-            return dict(compiled=False, ran=False, output=(r.stdout or ""), cat="PARSE", silent=False, compiler_stderr=outtext.strip())
-        output = r.stdout or ""
-        if r.returncode != 0:
-            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
-        ok = (output == task["expected"])
-        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
-
-SCORE = {"aic": score_aic, "c": score_c, "python": score_py}
 
 # ---------------- cell runner ----------------
 def completed_cells():
@@ -349,3 +284,81 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def score_aic(code, task):
+    sd = (task.get("fixed_stdin") or FIXED_STDIN) if task["uses_stdin"] else None
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "prog.aic")
+        open(p, "w").write(code)
+        # ensure fixed input file in run cwd
+        if task["uses_file"]:
+            _fn, _fc = task_file(task)
+            open(os.path.join(d, _fn), "w").write(_fc)
+        # build from project root so lib/ imports resolve
+        elf = os.path.join(d, "prog.elf")
+        try:
+            b = subprocess.run(["python3", os.path.join(BASE, "aic.py"), "build", p, "-o", elf],
+                               capture_output=True, text=True, cwd=BASE, timeout=BUILD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return dict(compiled=False, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
+        outtext = (b.stdout or "") + (b.stderr or "")
+        if b.returncode != 0:
+            m = re.search(r":kind (\w+)", outtext)
+            return dict(compiled=False, ran=False, output="", cat=(m.group(1) if m else "CODEGEN"),
+                        silent=False, compiler_stderr=outtext.strip())
+        try:
+            r = subprocess.run([elf], capture_output=True, timeout=RUN_TIMEOUT,
+                               input=((sd or "") + "").encode(), cwd=d)
+        except subprocess.TimeoutExpired:
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
+        output = r.stdout.decode(errors="replace")
+        if r.returncode != 0:
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
+        ok = (output == task["expected"])
+        return dict(compiled=True, ran=True, output=output, cat="none" if ok else "none",
+                    silent=(not ok))
+
+def score_c(code, task):
+    sd = (task.get("fixed_stdin") or FIXED_STDIN) if task["uses_stdin"] else None
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "prog.c"); o = os.path.join(d, "prog")
+        open(p, "w").write(code)
+        if task["uses_file"]:
+            _fn, _fc = task_file(task)
+            open(os.path.join(d, _fn), "w").write(_fc)
+        c = subprocess.run(["gcc", "-O2", "-o", o, p], capture_output=True, text=True, timeout=BUILD_TIMEOUT)
+        if c.returncode != 0:
+            return dict(compiled=False, ran=False, output="", cat="CODEGEN", silent=False, compiler_stderr="")
+        try:
+            r = subprocess.run([o], capture_output=True, timeout=RUN_TIMEOUT,
+                               input=((sd or "") + "").encode(), cwd=d)
+        except subprocess.TimeoutExpired:
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
+        output = r.stdout.decode(errors="replace")
+        if r.returncode != 0:
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
+        ok = (output == task["expected"])
+        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
+
+def score_py(code, task):
+    sd = (task.get("fixed_stdin") or FIXED_STDIN) if task["uses_stdin"] else None
+    with tempfile.TemporaryDirectory() as d:
+        if task["uses_file"]:
+            _fn, _fc = task_file(task)
+            open(os.path.join(d, _fn), "w").write(_fc)
+        try:
+            r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                               timeout=BUILD_TIMEOUT + RUN_TIMEOUT, input=(sd or ""), cwd=d)
+        except subprocess.TimeoutExpired:
+            return dict(compiled=True, ran=False, output="", cat="timeout", silent=False, compiler_stderr="")
+        outtext = r.stderr or ""
+        if "SyntaxError" in outtext or "IndentationError" in outtext:
+            return dict(compiled=False, ran=False, output=(r.stdout or ""), cat="PARSE", silent=False, compiler_stderr=outtext.strip())
+        output = r.stdout or ""
+        if r.returncode != 0:
+            return dict(compiled=True, ran=False, output=output, cat="RUNTIME", silent=False, compiler_stderr="")
+        ok = (output == task["expected"])
+        return dict(compiled=True, ran=True, output=output, cat="none", silent=(not ok), compiler_stderr="")
+
+SCORE = {"aic": score_aic, "c": score_c, "python": score_py}
