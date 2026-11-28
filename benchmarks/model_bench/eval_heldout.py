@@ -44,18 +44,36 @@ def wilson(k, n, z=1.96):
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+SYSTEM_BY_LANG = {
+    "aic": AIC_SYSTEM + "\n" + AIC_SPEC_CONTEXT,
+    "c": "You are an expert C engineer. Write a complete, compilable C program "
+         "with a main function that prints exactly the expected output.",
+    "python": "You are an expert Python engineer. Write a complete, runnable "
+              "Python 3 program that prints exactly the expected output.",
+}
+
+
+def system_for(lang):
+    return SYSTEM_BY_LANG["aic" if lang == "agent_zero" else lang]
+
+
 def prompt_for(lang, task):
     lead = {
-        "aic": "Return ONLY the AIC program in a fenced ```aic block.",
+        "aic": "Return ONLY the AIC program in a fenced ```aic block.\n"
+               "IMPORTANT: AIC executes top-level statements directly. Do NOT "
+               "wrap the program in [: main [] [D ...]] - a function named main "
+               "is never called automatically and the program would print nothing. "
+               "Write the statements at the top level, as in the examples.",
         "c": "Return ONLY a complete C program (with main) in a fenced ```c block. "
              "It must print exactly the expected output.",
         "python": "Return ONLY a complete Python 3 program in a fenced ```python block.",
     }[lang]
+    # AIC programs run at top level; do not wrap the body in a never-called main.
     return f"Task:\n{task['spec']}\n\n{lead}"
 
 
 def run_cell(task, lang, model):
-    reply = harness.chat(SYSTEM, prompt_for(lang, task), model=model)
+    reply = harness.chat(system_for(lang), prompt_for(lang, task), model=model)
     code = harness.extract_code(reply)
     res = harness.SCORE[lang](code, task)
     return dict(code=code, res=res)
@@ -82,7 +100,7 @@ def run_agent(task, iters, model):
                          f"Got:\n```\n{last.get('output')}```")
             user += "\nFix it. Return ONLY the corrected AIC program in a fenced ```aic block."
         try:
-            reply = harness.chat(SYSTEM, user, model=model)
+            reply = harness.chat(system_for("aic"), user, model=model)
         except Exception as e:
             return dict(ok=False, iterations=it, code="", res={"cat": "LLM", "compiler_stderr": str(e)})
         code = harness.extract_code(reply)

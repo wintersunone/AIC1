@@ -222,36 +222,37 @@ H(123, 3,
   lambda: "AIC\n")
 
 H(124, 3,
-  "Using the strings module, concatenate \"held\" and \"out\" and print the result on its own line.",
+  "Print the concatenation of \"held\" and \"out\" with no separator, on its own line.",
   lambda: "heldout\n")
 
 H(125, 3,
-  "Using the strings module, print the length of the string \"evaluation\" on its own line.",
+  "Print the number of characters in the string \"evaluation\" on its own line.",
   lambda: "10\n")
 
 H(126, 3,
-  "Using the strings module, print the character at index 4 of the string \"heldout\" on its own line.",
-  lambda: "o\n")
+  "Print the ASCII character code of the character at index 4 of the string \"heldout\" "
+  "(i.e. the numeric code point, not the character) on its own line.",
+  lambda: f"{ord('heldout'[4])}\n")
 
 H(127, 3,
-  "Using the math module, print the integer square root of 1000 (floor) on its own line.",
+  "Print the floor of the square root of 1000 as an integer, on its own line.",
   lambda: f"{int(1000 ** 0.5)}\n")
 
 H(128, 3,
-  "Using the math module, print the result of 3 raised to the power 7 on its own line.",
+  "Compute 3 raised to the integer power 7 and print the integer result on its own line.",
   lambda: f"{3**7}\n")
 
 H(129, 3,
-  "Using the math module, clamp the value 250 into the range 0 to 100 and print the result "
+  "Clamp the value 250 into the range 0 to 100 inclusive and print the clamped value "
   "on its own line.",
   lambda: "100\n")
 
 H(130, 3,
-  "Using the math module, print the least common multiple of 21 and 28 on its own line.",
+  "Print the least common multiple of 21 and 28 on its own line.",
   lambda: f"{21*28//_gcd(21, 28)}\n")
 
 H(131, 3,
-  "Using the dynamic vector module, create a vector, push the integers 10, 20 and 30, "
+  "Import lib/vec.aic. Create a vector with vec_new, push the integers 10, 20 and 30 with vec_push, "
   "then print its length and its first element on one line separated by a space.",
   lambda: "3 10\n")
 
@@ -269,7 +270,7 @@ H(134, 3,
   lambda: "-128\n")
 
 H(135, 3,
-  "Allocate a quadword array of 4 slots, store 7 in slot 0 and 11 in slot 2, then print "
+  "Allocate a 4-word heap buffer with [H 32]. Store 7 in word slot 0 and 11 in word slot 2 using [@@! ...], then print "
   "the sum of those two slots on its own line.",
   lambda: "18\n")
 
@@ -303,27 +304,27 @@ H(141, 4,
   lambda: "7\n", fixed_stdin="7\n")
 
 H(142, 4,
-  "Allocate a linear arena, allocate 16 bytes from it, allocate another 32 bytes, then print "
-  "the total number of bytes used on its own line.",
+  "Allocate memory for 16 bytes, then allocate memory for 32 more bytes, and print the total "
+  "number of bytes allocated across both allocations on its own line.",
   lambda: "48\n")
 
 H(143, 4,
-  "Define a 2-field record (i, s). Set i to 9 and s to the decimal string of 15. Print i on "
-  "the first line and s on the second line.",
+  "Create a two-field record with fields i and s. Set i to the integer 9 and s to the string \"15\". "
+  "Print i on the first line and s on the second line.",
   lambda: "9\n15\n")
 
 H(144, 4,
-  "Build a byte buffer containing the characters of \"aic\" followed by a 0 terminator. "
-  "Print its length on its own line.",
+  "Create a byte array holding the three byte values 97, 105 and 99 followed by a 0 terminator, "
+  "then print the number of non-zero bytes before the terminator on its own line.",
   lambda: "3\n")
 
 H(145, 4,
-  "Using the JSON module, parse the object {\"level\": 4, \"name\": \"heldout\"} and print "
+  "Parse the JSON object {\"level\": 4, \"name\": \"heldout\"} and print "
   "the value of the level field on its own line.",
   lambda: "4\n")
 
 H(146, 4,
-  "Using the JSON module, build an object, set the key \"count\" to the integer 12, serialize it, "
+  "Build a JSON object, set the key \"count\" to the integer 12, serialize it, "
   "then parse it back and print the value of count on its own line.",
   lambda: "12\n")
 
